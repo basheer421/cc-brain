@@ -1,9 +1,6 @@
 import logging
-import os
 import subprocess
-import sys
 import threading
-import time
 from pathlib import Path
 
 import rumps
@@ -11,14 +8,14 @@ import rumps
 from cc_brain.config import load_config
 from cc_brain.extractor import extract_delta, save_offset
 from cc_brain.scanner import discover_active_sessions
-from cc_brain.summarizer import update_summary
+from cc_brain.summarizer import update_summary, get_summary_filename
 from cc_brain.watcher import TranscriptWatcher
 
 ICONS_DIR = Path(__file__).parent.parent / "icons"
 
 
 def _setup_logging(config):
-    error_log = config.get("error_log", str(Path.home() / ".cc-brain" / "logs" / "errors.log"))
+    error_log = config["error_log"]
     Path(error_log).parent.mkdir(parents=True, exist_ok=True)
 
     logger = logging.getLogger("cc-brain")
@@ -42,84 +39,68 @@ class CCBrainApp(rumps.App):
         self.config = load_config()
         self.logger = _setup_logging(self.config)
 
-        icon_path = str(ICONS_DIR / "brain-idle.png")
-        if not Path(icon_path).exists():
-            icon_path = None
-
+        icon_path = ICONS_DIR / "brain-idle.png"
         super().__init__(
             "cc-brain",
-            icon=icon_path,
+            icon=str(icon_path) if icon_path.exists() else None,
             template=True,
             quit_button=None,
         )
 
         self._sessions = {}
-        self._processing_lock = threading.Lock()
-        self._status = "idle"
+        self._worker = None
 
         self._sessions_menu = rumps.MenuItem("Active Sessions")
-        self._no_sessions = rumps.MenuItem("  (no active sessions)")
-        self._sessions_menu.add(self._no_sessions)
-
-        self._open_summaries = rumps.MenuItem("Open Summaries Folder", callback=self._open_summaries_folder)
-        self._open_errors = rumps.MenuItem("Open Error Log", callback=self._open_error_log)
+        self._sessions_menu.add(rumps.MenuItem("  (no active sessions)"))
 
         mode = self.config.get("extraction_mode", "smart")
         self._mode_smart = rumps.MenuItem("Mode: Smart", callback=self._set_smart)
         self._mode_full = rumps.MenuItem("Mode: Full", callback=self._set_full)
-        if mode == "smart":
-            self._mode_smart.state = 1
-        else:
-            self._mode_full.state = 1
-
-        self._quit_item = rumps.MenuItem("Quit cc-brain", callback=self._quit)
+        (self._mode_smart if mode == "smart" else self._mode_full).state = 1
 
         self.menu = [
             self._sessions_menu,
             None,
-            self._open_summaries,
-            self._open_errors,
+            rumps.MenuItem("Open Summaries Folder", callback=self._open_summaries),
+            rumps.MenuItem("Open Error Log", callback=self._open_errors),
             None,
             self._mode_smart,
             self._mode_full,
             None,
-            self._quit_item,
+            rumps.MenuItem("Quit cc-brain", callback=self._quit),
         ]
 
         if not self.config.get("openrouter_api_key"):
             self.logger.error("No OpenRouter API key found in config or environment")
-            self._set_icon_state("error")
+            self._set_icon("error")
 
         self._watcher = TranscriptWatcher(
             callback=self._on_jsonl_changed,
             debounce_seconds=self.config.get("debounce_seconds", 3),
         )
 
-    def _set_icon_state(self, state):
-        self._status = state
-        # Filled = active/syncing, Outline = idle/error
+    def _set_icon(self, state):
         icon_name = "brain-active.png" if state == "syncing" else "brain-idle.png"
         icon_file = ICONS_DIR / icon_name
         if icon_file.exists():
             self.icon = str(icon_file)
 
-    def _open_summaries_folder(self, _):
-        summary_dir = self.config.get("summary_dir", str(Path.home() / ".cc-brain" / "summaries"))
-        subprocess.run(["open", summary_dir])
+    def _open_summaries(self, _):
+        subprocess.run(["open", self.config["summary_dir"]])
 
-    def _open_error_log(self, _):
-        error_log = self.config.get("error_log", str(Path.home() / ".cc-brain" / "logs" / "errors.log"))
-        if Path(error_log).exists():
-            subprocess.run(["open", error_log])
+    def _open_errors(self, _):
+        path = self.config["error_log"]
+        if Path(path).exists():
+            subprocess.run(["open", path])
         else:
             rumps.notification("cc-brain", "", "No error log file found yet.")
 
-    def _set_smart(self, sender):
+    def _set_smart(self, _):
         self.config["extraction_mode"] = "smart"
         self._mode_smart.state = 1
         self._mode_full.state = 0
 
-    def _set_full(self, sender):
+    def _set_full(self, _):
         self.config["extraction_mode"] = "full"
         self._mode_smart.state = 0
         self._mode_full.state = 1
@@ -133,51 +114,50 @@ class CCBrainApp(rumps.App):
         if not self._sessions:
             self._sessions_menu.add(rumps.MenuItem("  (no active sessions)"))
             return
-
         for sid, info in self._sessions.items():
-            label = f"  {info.get('name', 'unknown')} — {info.get('cwd', '')}"
-            item = rumps.MenuItem(label, callback=self._make_open_summary(sid))
-            self._sessions_menu.add(item)
+            label = f"  {info.get('name', '?')} — {info.get('cwd', '')}"
+            self._sessions_menu.add(rumps.MenuItem(label, callback=self._open_summary_cb(sid)))
 
-    def _make_open_summary(self, session_id):
-        def callback(_):
-            summary_dir = self.config.get("summary_dir", str(Path.home() / ".cc-brain" / "summaries"))
-            path = Path(summary_dir) / f"{session_id}.md"
-            if path.exists():
-                subprocess.run(["open", str(path)])
-            else:
-                rumps.notification("cc-brain", "", f"No summary yet for this session.")
-        return callback
+    def _open_summary_cb(self, session_id):
+        def cb(_):
+            filename = get_summary_filename(session_id)
+            if filename:
+                path = Path(self.config["summary_dir"]) / filename
+                if path.exists():
+                    subprocess.run(["open", str(path)])
+                    return
+            rumps.notification("cc-brain", "", "No summary yet for this session.")
+        return cb
 
     def _on_jsonl_changed(self, jsonl_path):
-        """Called by the watchdog handler (from a background thread) when a JSONL file changes."""
-        with self._processing_lock:
-            session_id = Path(jsonl_path).stem
+        """Called from watchdog thread. Dispatch to a worker thread so we don't block the watcher."""
+        t = threading.Thread(target=self._process_delta, args=(jsonl_path,), daemon=True)
+        t.start()
 
+    def _process_delta(self, jsonl_path):
+        session_id = Path(jsonl_path).stem
+
+        info = self._sessions.get(session_id)
+        if not info:
+            self._sessions = discover_active_sessions()
+            self._refresh_sessions_menu()
             info = self._sessions.get(session_id)
             if not info:
-                self._sessions = discover_active_sessions()
-                self._refresh_sessions_menu()
-                info = self._sessions.get(session_id)
-                if not info:
-                    return
-
-            mode = self.config.get("extraction_mode", "smart")
-            delta_text, new_offset = extract_delta(jsonl_path, session_id, mode=mode)
-
-            if not delta_text:
                 return
 
-            self._set_icon_state("syncing")
-            self.logger.info("Processing delta for session %s (%d chars)", session_id, len(delta_text))
+        mode = self.config.get("extraction_mode", "smart")
+        delta_text, new_offset = extract_delta(jsonl_path, session_id, mode=mode)
+        if not delta_text:
+            return
 
-            success = update_summary(self.config, session_id, info, delta_text)
+        self._set_icon("syncing")
+        self.logger.info("Processing delta for %s (%d chars)", session_id, len(delta_text))
 
-            if success:
-                save_offset(session_id, new_offset)
-                self._set_icon_state("idle")
-            else:
-                self._set_icon_state("error")
+        if update_summary(self.config, session_id, info, delta_text):
+            save_offset(session_id, new_offset)
+            self._set_icon("idle")
+        else:
+            self._set_icon("error")
 
     @rumps.timer(30)
     def _scan_sessions(self, _):
@@ -196,8 +176,7 @@ class CCBrainApp(rumps.App):
 
 
 def main():
-    app = CCBrainApp()
-    app.run()
+    CCBrainApp().run()
 
 
 if __name__ == "__main__":

@@ -1,10 +1,13 @@
 import logging
 import time
+from datetime import datetime
 from pathlib import Path
 
 import requests
 
 logger = logging.getLogger("cc-brain")
+
+_session = requests.Session()
 
 SYSTEM_PROMPT = """You are a session summarizer for a developer's Claude Code sessions.
 Given the previous summary (if any) and new conversation turns, produce an updated Markdown summary.
@@ -35,68 +38,46 @@ What's happening right now / what's next (1-2 sentences)
 """
 
 
-def summarize(config, session_info, delta_text, previous_summary=None):
-    """Call OpenRouter to produce an updated summary. Returns the markdown string or None on failure."""
+def _format_started(sa):
+    try:
+        if isinstance(sa, (int, float)):
+            return datetime.fromtimestamp(sa / 1000).strftime("%Y-%m-%d %H:%M")
+        if isinstance(sa, str):
+            return sa[:16].replace("T", " ")
+    except (ValueError, TypeError, OSError):
+        pass
+    return "unknown"
+
+
+def _call_api(config, messages):
     api_key = config.get("openrouter_api_key")
     if not api_key:
         logger.error("No OpenRouter API key configured")
         return None
 
-    model = config.get("model", "deepseek/deepseek-v4-flash")
-
-    user_msg = []
-    if previous_summary:
-        user_msg.append(f"Previous summary:\n{previous_summary}")
-    else:
-        user_msg.append("Previous summary:\nNone — new session")
-
-    user_msg.append(f"\nSession info:\n- Project: {session_info.get('cwd', 'unknown')}")
-    user_msg.append(f"- Session ID: {session_info.get('session_id', 'unknown')}")
-    if session_info.get("started_at"):
-        from datetime import datetime
-        try:
-            sa = session_info["started_at"]
-            if isinstance(sa, (int, float)):
-                started = datetime.fromtimestamp(sa / 1000).strftime("%Y-%m-%d %H:%M")
-            elif isinstance(sa, str):
-                started = sa[:16].replace("T", " ")
-            else:
-                started = "unknown"
-        except (ValueError, TypeError, OSError):
-            started = "unknown"
-        user_msg.append(f"- Started: {started}")
-
-    user_msg.append(f"\nNew conversation turns:\n{delta_text}")
-
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": "\n".join(user_msg)},
-        ],
-        "max_tokens": 2000,
-        "temperature": 0.3,
-    }
-
-    headers = {
+    _session.headers.update({
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
         "HTTP-Referer": "https://github.com/cc-brain",
         "X-Title": "cc-brain",
+    })
+
+    payload = {
+        "model": config.get("model", "deepseek/deepseek-v4-flash"),
+        "messages": messages,
+        "max_tokens": 2000,
+        "temperature": 0.3,
     }
 
     for attempt in range(2):
         try:
-            resp = requests.post(
+            resp = _session.post(
                 "https://openrouter.ai/api/v1/chat/completions",
-                headers=headers,
                 json=payload,
                 timeout=60,
             )
             resp.raise_for_status()
-            data = resp.json()
-            content = data["choices"][0]["message"]["content"]
-            return content.strip()
+            return resp.json()["choices"][0]["message"]["content"].strip()
         except Exception as e:
             logger.error("OpenRouter API error (attempt %d): %s", attempt + 1, e)
             if attempt == 0:
@@ -105,17 +86,14 @@ def summarize(config, session_info, delta_text, previous_summary=None):
     return None
 
 
-def _summary_filename(session_id, session_info):
-    """Generate readable filename: <project-dir-name>-<started_at_ms>.md"""
+def _build_filename(session_info):
     project_name = Path(session_info.get("cwd", "unknown")).name
-    started = session_info.get("started_at")
-    if isinstance(started, (int, float)):
-        ts = int(started)
-    elif isinstance(started, str):
-        from datetime import datetime
+    sa = session_info.get("started_at")
+    if isinstance(sa, (int, float)):
+        ts = int(sa)
+    elif isinstance(sa, str):
         try:
-            dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
-            ts = int(dt.timestamp() * 1000)
+            ts = int(datetime.fromisoformat(sa.replace("Z", "+00:00")).timestamp() * 1000)
         except (ValueError, TypeError):
             ts = 0
     else:
@@ -123,7 +101,6 @@ def _summary_filename(session_id, session_info):
     return f"{project_name}-{ts}.md"
 
 
-# Maps session_id -> filename so we update the same file across calls
 _filename_cache = {}
 
 
@@ -132,21 +109,38 @@ def update_summary(config, session_id, session_info, delta_text):
     summary_dir = Path(config["summary_dir"])
 
     if session_id not in _filename_cache:
-        filename = _summary_filename(session_id, session_info)
-        _filename_cache[session_id] = filename
-    summary_path = summary_dir / _filename_cache[session_id]
+        _filename_cache[session_id] = _build_filename(session_info)
+    filename = _filename_cache[session_id]
+    summary_path = summary_dir / filename
 
-    previous = None
-    if summary_path.exists():
-        previous = summary_path.read_text()
+    previous = summary_path.read_text() if summary_path.exists() else None
 
-    info = dict(session_info)
-    info["session_id"] = session_id
+    user_parts = []
+    if previous:
+        user_parts.append(f"Previous summary:\n{previous}")
+    else:
+        user_parts.append("Previous summary:\nNone — new session")
 
-    result = summarize(config, info, delta_text, previous)
+    user_parts.append(f"\nSession info:")
+    user_parts.append(f"- Project: {session_info.get('cwd', 'unknown')}")
+    user_parts.append(f"- Session ID: {session_id}")
+    if sa := session_info.get("started_at"):
+        user_parts.append(f"- Started: {_format_started(sa)}")
+    user_parts.append(f"\nNew conversation turns:\n{delta_text}")
+
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": "\n".join(user_parts)},
+    ]
+
+    result = _call_api(config, messages)
     if result is None:
         return False
 
     summary_path.write_text(result)
-    logger.info("Updated summary: %s", _filename_cache[session_id])
+    logger.info("Updated summary: %s", filename)
     return True
+
+
+def get_summary_filename(session_id):
+    return _filename_cache.get(session_id)
