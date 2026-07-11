@@ -17,10 +17,11 @@ case "$1" in
 
     # Generate plist with actual paths
     PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-    PYTHON_PATH="$(which python3)"
+    PYTHON_PATH="$(python3 -c 'import sys; print(sys.executable)')"
 
     sed -e "s|__PYTHON_PATH__|$PYTHON_PATH|g" \
         -e "s|__PROJECT_DIR__|$PROJECT_DIR|g" \
+        -e "s|__HOME__|$HOME|g" \
         "$PLIST_SRC" > "$PLIST_DST"
 
     echo "Installed plist to $PLIST_DST"
