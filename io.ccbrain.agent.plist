@@ -18,9 +18,9 @@
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/Users/bammar/.cc-brain/logs/stdout.log</string>
+  <string>__HOME__/.cc-brain/logs/stdout.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/bammar/.cc-brain/logs/stderr.log</string>
+  <string>__HOME__/.cc-brain/logs/stderr.log</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PYTHONPATH</key>
