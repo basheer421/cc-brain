@@ -97,12 +97,9 @@ class CCBrainApp(rumps.App):
 
     def _set_icon_state(self, state):
         self._status = state
-        icon_map = {
-            "idle": "brain-idle.png",
-            "syncing": "brain-sync.png",
-            "error": "brain-error.png",
-        }
-        icon_file = ICONS_DIR / icon_map.get(state, "brain-idle.png")
+        # Filled = active/syncing, Outline = idle/error
+        icon_name = "brain-active.png" if state == "syncing" else "brain-idle.png"
+        icon_file = ICONS_DIR / icon_name
         if icon_file.exists():
             self.icon = str(icon_file)
 
