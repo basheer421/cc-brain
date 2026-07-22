@@ -10,12 +10,12 @@ Every time you exchange messages with Claude Code, CC Brain extracts the new con
 
 ## Install
 
-### Homebrew (recommended)
+### Homebrew
 
 ```bash
-brew tap basheer421/tap
-brew install --cask cc-brain
 pip3 install rumps watchdog requests Pillow
+brew tap basheer421/tap
+brew install cc-brain
 ```
 
 ### From source
