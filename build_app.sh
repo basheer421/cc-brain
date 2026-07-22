@@ -25,13 +25,18 @@ cp -r "$SCRIPT_DIR/cc_brain" "$RESOURCES/cc_brain"
 # Copy icons
 cp -r "$SCRIPT_DIR/icons" "$RESOURCES/icons"
 
-# Find the REAL python3 binary (not pyenv shim — shims fail when launched from Finder)
-PYTHON_PATH="$(python3 -c 'import sys; print(sys.executable)')"
+# Portable launcher: bash wrapper execs into python so the Python process
+# becomes PID 1 of the app and gets the WindowServer connection for menu bar.
+# No hardcoded python path — works on any machine with python3 in PATH.
+cat > "$MACOS/cc-brain" << 'LAUNCHER'
+#!/bin/bash
+DIR="$(cd "$(dirname "$0")" && pwd)"
+# Resolve real python binary (skip pyenv shims which break Finder launches)
+PYTHON="$(python3 -c 'import sys; print(sys.executable)' 2>/dev/null || echo /usr/local/bin/python3)"
+exec "$PYTHON" "$DIR/../Resources/cc-brain-launcher.py" "$@"
+LAUNCHER
 
-# Create the launcher script (Python shebang — no bash wrapper, so macOS
-# properly connects the process to the WindowServer for menu bar icons)
-cat > "$MACOS/cc-brain" << LAUNCHER
-#!${PYTHON_PATH}
+cat > "$RESOURCES/cc-brain-launcher.py" << 'PYLAUNCH'
 import os
 import sys
 import fcntl
@@ -44,7 +49,7 @@ try:
 except OSError:
     sys.exit(0)
 
-resources = os.path.join(os.path.dirname(__file__), "..", "Resources")
+resources = os.path.join(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, resources)
 
 import cc_brain.app as app
@@ -53,7 +58,7 @@ app.ICONS_DIR = Path(resources) / "icons"
 
 from cc_brain.app import main
 main()
-LAUNCHER
+PYLAUNCH
 
 chmod +x "$MACOS/cc-brain"
 
@@ -92,7 +97,7 @@ PLIST
 
 # Generate app icon (icns) from the brain icon
 # Create a 512x512 version for the app icon
-"$PYTHON_PATH" -c "
+"$(python3 -c 'import sys; print(sys.executable)')" -c "
 from PIL import Image, ImageDraw
 import subprocess, os, tempfile
 
