@@ -101,7 +101,7 @@ export default function Hero() {
         >
           <InstallCommand />
 
-          <div className="mt-4 flex items-center justify-center gap-4 text-sm text-white/50">
+          <div className="mt-4 flex items-center justify-center gap-4 font-mono text-sm text-white/50">
             <a
               href="https://github.com/basheer421/cc-brain"
               target="_blank"
