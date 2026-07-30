@@ -158,6 +158,19 @@ Single Python process with four subsystems:
 - **Summarizer** — calls OpenRouter with previous summary + new delta, writes updated `.md`
 - **MenuBarApp** — `rumps` ties it together with a native menu bar icon
 
+## Contributing
+
+```bash
+git clone https://github.com/basheer421/cc-brain.git
+cd cc-brain
+pip3 install -r requirements.txt
+python3 -m cc_brain.app
+```
+
+PRs welcome. If you're fixing a bug, include steps to reproduce. If you're adding a feature, open an issue first so we can discuss.
+
+The website lives in `website/` — run `cd website && bun install && bun run dev` to work on it locally.
+
 ## License
 
 MIT
