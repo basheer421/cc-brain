@@ -2,6 +2,8 @@
 
 Cross-session awareness for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). A macOS menu bar app that watches your sessions and generates living Markdown summaries in real-time.
 
+**Website:** [cc-brain.bachir.me](https://cc-brain.bachir.me)
+
 Every time you exchange messages with Claude Code, CC Brain extracts the new conversation turns and sends them to an LLM (via [OpenRouter](https://openrouter.ai)) to incrementally update a structured summary file.
 
 <p align="center">
@@ -9,6 +11,10 @@ Every time you exchange messages with Claude Code, CC Brain extracts the new con
 </p>
 
 ## Install
+
+```bash
+curl -sSL cc-brain.bachir.me | bash
+```
 
 ### Homebrew
 
