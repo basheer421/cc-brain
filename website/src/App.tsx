@@ -1,3 +1,11 @@
+import Hero from './components/Hero'
+import Footer from './components/Footer'
+
 export default function App() {
-  return <div>hello</div>
+  return (
+    <main className="bg-black">
+      <Hero />
+      <Footer />
+    </main>
+  )
 }
