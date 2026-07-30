@@ -85,6 +85,15 @@ export default function Footer() {
             >
               Open Doodles
             </a>
+            {' & '}
+            <a
+              href="https://absurd.design"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-[#7d8590] transition-colors"
+            >
+              Absurd Design
+            </a>
           </p>
         </div>
       </div>
