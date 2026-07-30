@@ -101,7 +101,7 @@ export default function BlurText({
     <p
       ref={ref}
       className={className}
-      style={{ display: 'flex', flexWrap: 'wrap' }}
+      style={{ display: 'flex', flexWrap: 'wrap', gap: animateBy === 'words' ? '0.25em' : undefined }}
     >
       {elements.map((segment, index) => {
         const animateKeyframes = buildKeyframes(fromSnapshot, toSnapshots)
@@ -126,8 +126,8 @@ export default function BlurText({
               index === elements.length - 1 ? onAnimationComplete : undefined
             }
           >
-            {segment === ' ' ? ' ' : segment}
-            {animateBy === 'words' && index < elements.length - 1 && ' '}
+            {segment === ' ' ? ' ' : segment}
+            {animateBy === 'words' && index < elements.length - 1 && ' '}
           </motion.span>
         )
       })}

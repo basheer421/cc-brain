@@ -1,5 +1,5 @@
 /* eslint-disable react/no-unknown-property */
-import { useRef, useEffect, forwardRef } from 'react'
+import { useRef, useEffect, useMemo, forwardRef } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { EffectComposer, wrapEffect } from '@react-three/postprocessing'
 import { Effect } from 'postprocessing'
@@ -179,6 +179,8 @@ interface DitheredWavesProps {
   disableAnimation: boolean
   enableMouseInteraction: boolean
   mouseRadius: number
+  colorFadeFrom?: [number, number, number]
+  colorFadeDuration?: number
 }
 
 function DitheredWaves({
@@ -191,48 +193,68 @@ function DitheredWaves({
   disableAnimation,
   enableMouseInteraction,
   mouseRadius,
+  colorFadeFrom,
+  colorFadeDuration = 0,
 }: DitheredWavesProps) {
   const mesh = useRef<THREE.Mesh>(null)
   const mouseRef = useRef(new THREE.Vector2())
+  const fadeStartTime = useRef<number | null>(null)
+  const timeAccum = useRef(0)
   const { viewport, size, gl } = useThree()
 
-  const waveUniformsRef = useRef({
-    time: new THREE.Uniform(0),
-    resolution: new THREE.Uniform(new THREE.Vector2(0, 0)),
-    waveSpeed: new THREE.Uniform(waveSpeed),
-    waveFrequency: new THREE.Uniform(waveFrequency),
-    waveAmplitude: new THREE.Uniform(waveAmplitude),
-    waveColor: new THREE.Uniform(new THREE.Color(...waveColor)),
-    mousePos: new THREE.Uniform(new THREE.Vector2(0, 0)),
-    enableMouseInteraction: new THREE.Uniform(enableMouseInteraction ? 1 : 0),
-    mouseRadius: new THREE.Uniform(mouseRadius),
-  })
+  const initialColor = colorFadeFrom ?? waveColor
+  const material = useMemo(() => new THREE.ShaderMaterial({
+    vertexShader: waveVertexShader,
+    fragmentShader: waveFragmentShader,
+    uniforms: {
+      time: { value: 0 },
+      resolution: { value: new THREE.Vector2(0, 0) },
+      waveSpeed: { value: waveSpeed },
+      waveFrequency: { value: waveFrequency },
+      waveAmplitude: { value: waveAmplitude },
+      waveColor: { value: new THREE.Color(...initialColor) },
+      mousePos: { value: new THREE.Vector2(0, 0) },
+      enableMouseInteraction: { value: enableMouseInteraction ? 1 : 0 },
+      mouseRadius: { value: mouseRadius },
+    },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [])
 
   useEffect(() => {
     const dpr = gl.getPixelRatio()
-    const w = Math.floor(size.width * dpr),
-      h = Math.floor(size.height * dpr)
-    const res = waveUniformsRef.current.resolution.value as THREE.Vector2
+    const w = Math.floor(size.width * dpr)
+    const h = Math.floor(size.height * dpr)
+    const res = material.uniforms.resolution.value as THREE.Vector2
     if (res.x !== w || res.y !== h) {
       res.set(w, h)
     }
-  }, [size, gl])
+  }, [size, gl, material])
 
-  const prevColor = useRef([...waveColor])
-  useFrame(({ clock }) => {
-    const u = waveUniformsRef.current
+  useFrame((_state, delta) => {
+    const u = material.uniforms
 
     if (!disableAnimation) {
-      u.time.value = clock.getElapsedTime()
+      timeAccum.current += delta
+      u.time.value = timeAccum.current
     }
 
-    if (u.waveSpeed.value !== waveSpeed) u.waveSpeed.value = waveSpeed
-    if (u.waveFrequency.value !== waveFrequency) u.waveFrequency.value = waveFrequency
-    if (u.waveAmplitude.value !== waveAmplitude) u.waveAmplitude.value = waveAmplitude
+    u.waveSpeed.value = waveSpeed
+    u.waveFrequency.value = waveFrequency
+    u.waveAmplitude.value = waveAmplitude
 
-    if (!prevColor.current.every((v, i) => v === waveColor[i])) {
-      ;(u.waveColor.value as THREE.Color).set(...waveColor)
-      prevColor.current = [...waveColor]
+    if (colorFadeFrom && colorFadeDuration > 0) {
+      if (fadeStartTime.current === null) fadeStartTime.current = timeAccum.current
+      const t = Math.min((timeAccum.current - fadeStartTime.current) / (colorFadeDuration / 1000), 1)
+      const eased = t * t * (3 - 2 * t)
+      const c = u.waveColor.value as THREE.Color
+      c.r = colorFadeFrom[0] + (waveColor[0] - colorFadeFrom[0]) * eased
+      c.g = colorFadeFrom[1] + (waveColor[1] - colorFadeFrom[1]) * eased
+      c.b = colorFadeFrom[2] + (waveColor[2] - colorFadeFrom[2]) * eased
+    } else {
+      const c = u.waveColor.value as THREE.Color
+      if (c.r !== waveColor[0] || c.g !== waveColor[1] || c.b !== waveColor[2]) {
+        c.setRGB(waveColor[0], waveColor[1], waveColor[2])
+      }
     }
 
     u.enableMouseInteraction.value = enableMouseInteraction ? 1 : 0
@@ -258,11 +280,7 @@ function DitheredWaves({
     <>
       <mesh ref={mesh} scale={[viewport.width, viewport.height, 1]}>
         <planeGeometry args={[1, 1]} />
-        <shaderMaterial
-          vertexShader={waveVertexShader}
-          fragmentShader={waveFragmentShader}
-          uniforms={waveUniformsRef.current}
-        />
+        <primitive object={material} attach="material" />
       </mesh>
 
       <EffectComposer>
@@ -292,6 +310,8 @@ interface DitherProps {
   disableAnimation?: boolean
   enableMouseInteraction?: boolean
   mouseRadius?: number
+  colorFadeFrom?: [number, number, number]
+  colorFadeDuration?: number
 }
 
 export default function Dither({
@@ -304,6 +324,8 @@ export default function Dither({
   disableAnimation = false,
   enableMouseInteraction = true,
   mouseRadius = 1,
+  colorFadeFrom,
+  colorFadeDuration,
 }: DitherProps) {
   return (
     <Canvas
@@ -322,6 +344,8 @@ export default function Dither({
         disableAnimation={disableAnimation}
         enableMouseInteraction={enableMouseInteraction}
         mouseRadius={mouseRadius}
+        colorFadeFrom={colorFadeFrom}
+        colorFadeDuration={colorFadeDuration}
       />
     </Canvas>
   )
