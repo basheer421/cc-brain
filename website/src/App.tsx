@@ -1,5 +1,6 @@
 import Hero from './components/Hero'
 import Distinction from './components/Distinction'
+import Convergence from './components/Convergence'
 import Features from './components/Features'
 import Footer from './components/Footer'
 
@@ -21,6 +22,7 @@ export default function App() {
         </svg>
       </div>
       <Features />
+      <Convergence />
       <Footer />
     </main>
   )
