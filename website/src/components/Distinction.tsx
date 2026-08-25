@@ -8,9 +8,10 @@ export default function Distinction() {
         <p className="font-mono text-sm text-[#7d8590] leading-relaxed">
           Claude Code memory is static. You write it, or Claude writes it when
           asked. CC Brain runs in the background — every conversation turn gets
-          summarized, every session gets a living document. When you start a new
-          chat, it already knows the state of every other session. No one had to
-          remember to write anything down.
+          summarized, every session gets a living document. And it isn't limited
+          to one agent: Hermes sessions flow into the same memory. When you start
+          a new chat, it already knows the state of every other session — in
+          either tool. No one had to remember to write anything down.
         </p>
       </div>
     </section>

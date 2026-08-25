@@ -54,7 +54,7 @@ export default function Hero() {
 
         {showSubline && (
           <BlurText
-            text="It watches your Claude Code sessions and writes living summaries. Next chat picks up where you left off."
+            text="It watches your Claude Code and Hermes sessions and writes living summaries. Next chat picks up where you left off."
             delay={50}
             animateBy="words"
             direction="bottom"
