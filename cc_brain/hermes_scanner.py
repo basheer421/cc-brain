@@ -1,10 +1,13 @@
-"""Hermes session source — polls ~/.hermes/state.db (SQLite) for new messages.
+"""Hermes session source — event-driven via ~/.cc-brain/triggers/.
 
-Unlike Claude Code (JSONL files watched via watchdog), Hermes stores sessions
-in SQLite. This module is polled on a timer from app.py. Offsets are the last
-seen message id per session, stored in the shared offsets.json under keys
-"hermes:<session_id>". Summary filenames get an "h-" prefix so Hermes sessions
-are distinguishable from Claude Code ones in the summaries folder.
+A Hermes shell hook (post_llm_call → ~/.hermes/agent-hooks/ccbrain-notify.sh)
+touches ~/.cc-brain/triggers/hermes-<session_id> after every agent turn.
+cc-brain watches that directory with watchdog and reads only the named
+session's new messages from ~/.hermes/state.db (SQLite, read-only).
+
+Offsets are the last seen message id per session, stored in the shared
+offsets.json under keys "hermes:<session_id>". Summary filenames get an
+"h-" prefix so Hermes sessions are distinguishable from Claude Code ones.
 """
 
 import logging
@@ -17,9 +20,7 @@ from cc_brain.extractor import get_offset, MAX_DELTA_CHARS
 logger = logging.getLogger("cc-brain")
 
 STATE_DB = Path.home() / ".hermes" / "state.db"
-
-# Only look at sessions with activity in the last N hours to keep polls cheap.
-ACTIVE_WINDOW_HOURS = 48
+TRIGGERS_DIR = Path.home() / ".cc-brain" / "triggers"
 
 
 def _connect():
@@ -34,95 +35,82 @@ def _format_ts(ts):
         return "??:??"
 
 
-def extract_hermes_deltas():
-    """Return list of (offset_key, session_info, delta_text, new_offset)
-    for every Hermes session with new user/assistant messages."""
+def extract_hermes_delta(session_id):
+    """Read new user/assistant messages for one Hermes session.
+    Returns (offset_key, session_info, delta_text, new_offset) or None."""
     if not STATE_DB.exists():
-        return []
+        return None
 
-    results = []
     try:
         conn = _connect()
     except sqlite3.Error as e:
         logger.error("Cannot open Hermes state.db: %s", e)
-        return []
+        return None
 
     try:
         conn.row_factory = sqlite3.Row
-        sessions = conn.execute(
+        s = conn.execute(
+            "SELECT id, source, display_name, cwd, started_at FROM sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+        if s is None:
+            return None
+
+        key = f"hermes:{s['id']}"
+        offset = get_offset(key)
+
+        rows = conn.execute(
             """
-            SELECT s.id, s.source, s.display_name, s.cwd, s.started_at
-            FROM sessions s
-            WHERE s.parent_session_id IS NULL
-              AND EXISTS (
-                SELECT 1 FROM messages m
-                WHERE m.session_id = s.id
-                  AND m.timestamp > strftime('%s','now') - ?*3600
-              )
-            ORDER BY s.started_at DESC
-            LIMIT 50
+            SELECT id, role, content, timestamp FROM messages
+            WHERE session_id = ? AND id > ?
+              AND role IN ('user', 'assistant')
+              AND content IS NOT NULL AND content != ''
+            ORDER BY id
             """,
-            (ACTIVE_WINDOW_HOURS,),
+            (s["id"], offset),
         ).fetchall()
 
-        for s in sessions:
-            key = f"hermes:{s['id']}"
-            offset = get_offset(key)
+        if not rows:
+            return None
 
-            rows = conn.execute(
-                """
-                SELECT id, role, content, timestamp FROM messages
-                WHERE session_id = ? AND id > ?
-                  AND role IN ('user', 'assistant')
-                  AND content IS NOT NULL AND content != ''
-                ORDER BY id
-                """,
-                (s["id"], offset),
-            ).fetchall()
-
-            if not rows:
+        turns = []
+        for r in rows:
+            text = (r["content"] or "").strip()
+            if not text or text.startswith("[System:"):
                 continue
+            role = "User" if r["role"] == "user" else "Assistant"
+            turns.append(f"[{_format_ts(r['timestamp'])}] {role}: {text}")
 
-            turns = []
-            for r in rows:
-                text = (r["content"] or "").strip()
-                if not text or text.startswith("[System:"):
-                    continue
-                role = "User" if r["role"] == "user" else "Assistant"
-                turns.append(f"[{_format_ts(r['timestamp'])}] {role}: {text}")
+        new_offset = rows[-1]["id"]
+        if not turns:
+            # Only system/noise messages — advance offset silently.
+            return (key, None, None, new_offset)
 
-            new_offset = rows[-1]["id"]
-            if not turns:
-                # Only system/noise messages — advance offset silently.
-                results.append((key, None, None, new_offset))
-                continue
+        combined = "\n\n".join(turns)
+        if len(combined) > MAX_DELTA_CHARS:
+            truncated = []
+            total = 0
+            for turn in reversed(turns):
+                if total + len(turn) > MAX_DELTA_CHARS and truncated:
+                    break
+                truncated.append(turn)
+                total += len(turn)
+            truncated.reverse()
+            combined = "(earlier turns omitted)\n\n" + "\n\n".join(truncated)
 
-            combined = "\n\n".join(turns)
-            if len(combined) > MAX_DELTA_CHARS:
-                truncated = []
-                total = 0
-                for turn in reversed(turns):
-                    if total + len(turn) > MAX_DELTA_CHARS and truncated:
-                        break
-                    truncated.append(turn)
-                    total += len(turn)
-                truncated.reverse()
-                combined = "(earlier turns omitted)\n\n" + "\n\n".join(truncated)
+        cwd = s["cwd"] or ""
+        name = s["display_name"] or (Path(cwd).name if cwd else "hermes")
+        started_ms = int(float(s["started_at"]) * 1000) if s["started_at"] else 0
 
-            cwd = s["cwd"] or ""
-            name = s["display_name"] or (Path(cwd).name if cwd else "hermes")
-            started_ms = int(float(s["started_at"]) * 1000) if s["started_at"] else 0
-
-            info = {
-                "cwd": cwd or f"hermes/{s['source'] or 'unknown'}",
-                "name": name,
-                "started_at": started_ms,
-                "filename_prefix": "h-",
-            }
-            results.append((key, info, combined, new_offset))
+        info = {
+            "cwd": cwd or f"hermes/{s['source'] or 'unknown'}",
+            "name": name,
+            "started_at": started_ms,
+            "filename_prefix": "h-",
+        }
+        return (key, info, combined, new_offset)
     except sqlite3.Error as e:
         logger.error("Hermes state.db query failed: %s", e)
+        return None
     finally:
         conn.close()
-
-    return results

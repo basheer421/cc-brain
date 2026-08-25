@@ -9,17 +9,24 @@ logger = logging.getLogger("cc-brain")
 
 
 class DebouncedHandler(FileSystemEventHandler):
-    def __init__(self, callback, debounce_seconds=3):
+    def __init__(self, callback, debounce_seconds=3, suffix=".jsonl"):
         super().__init__()
         self._callback = callback
         self._debounce = debounce_seconds
+        self._suffix = suffix
         self._timers = {}
         self._lock = threading.Lock()
 
     def on_modified(self, event):
+        self._handle(event)
+
+    def on_created(self, event):
+        self._handle(event)
+
+    def _handle(self, event):
         if event.is_directory:
             return
-        if not event.src_path.endswith(".jsonl"):
+        if self._suffix and not event.src_path.endswith(self._suffix):
             return
 
         with self._lock:
@@ -41,14 +48,26 @@ class DebouncedHandler(FileSystemEventHandler):
 
 
 class TranscriptWatcher:
-    def __init__(self, callback, debounce_seconds=3):
+    def __init__(self, callback, debounce_seconds=3, hermes_callback=None):
         watch_path = Path.home() / ".claude" / "projects"
         self._observer = Observer()
         self._handler = DebouncedHandler(callback, debounce_seconds)
         self._watch_path = str(watch_path)
+        self._hermes_handler = None
+        self._hermes_path = None
+        if hermes_callback:
+            triggers = Path.home() / ".cc-brain" / "triggers"
+            triggers.mkdir(parents=True, exist_ok=True)
+            self._hermes_handler = DebouncedHandler(
+                hermes_callback, debounce_seconds, suffix=""
+            )
+            self._hermes_path = str(triggers)
 
     def start(self):
         self._observer.schedule(self._handler, self._watch_path, recursive=True)
+        if self._hermes_handler:
+            self._observer.schedule(self._hermes_handler, self._hermes_path, recursive=False)
+            logger.info("Watching %s for Hermes triggers", self._hermes_path)
         self._observer.daemon = True
         self._observer.start()
         logger.info("Watching %s for JSONL changes", self._watch_path)

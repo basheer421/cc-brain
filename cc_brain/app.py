@@ -7,7 +7,7 @@ import rumps
 
 from cc_brain.config import load_config
 from cc_brain.extractor import extract_delta, save_offset
-from cc_brain.hermes_scanner import extract_hermes_deltas
+from cc_brain.hermes_scanner import extract_hermes_delta
 from cc_brain.scanner import discover_active_sessions
 from cc_brain.summarizer import update_summary, get_summary_filename
 from cc_brain.watcher import TranscriptWatcher
@@ -78,6 +78,7 @@ class CCBrainApp(rumps.App):
         self._watcher = TranscriptWatcher(
             callback=self._on_jsonl_changed,
             debounce_seconds=self.config.get("debounce_seconds", 3),
+            hermes_callback=self._on_hermes_trigger,
         )
 
     def _set_icon(self, state):
@@ -168,32 +169,38 @@ class CCBrainApp(rumps.App):
         except Exception:
             self.logger.exception("Error scanning sessions")
 
-    @rumps.timer(60)
-    def _poll_hermes(self, _):
-        t = threading.Thread(target=self._process_hermes, daemon=True)
+    def _on_hermes_trigger(self, trigger_path):
+        """Called (debounced) when a Hermes hook touches a trigger file."""
+        name = Path(trigger_path).name
+        if not name.startswith("hermes-"):
+            return
+        session_id = name[len("hermes-"):]
+        t = threading.Thread(target=self._process_hermes, args=(session_id,), daemon=True)
         t.start()
 
-    def _process_hermes(self):
+    def _process_hermes(self, session_id):
         try:
-            deltas = extract_hermes_deltas()
+            result = extract_hermes_delta(session_id)
         except Exception:
-            self.logger.exception("Error polling Hermes sessions")
+            self.logger.exception("Error extracting Hermes delta for %s", session_id)
+            return
+        if result is None:
             return
 
-        for key, info, delta_text, new_offset in deltas:
-            if delta_text is None:
-                # Noise-only delta — just advance the offset.
-                save_offset(key, new_offset)
-                continue
+        key, info, delta_text, new_offset = result
+        if delta_text is None:
+            # Noise-only delta — just advance the offset.
+            save_offset(key, new_offset)
+            return
 
-            self._set_icon("syncing")
-            self.logger.info("Processing Hermes delta for %s (%d chars)", key, len(delta_text))
+        self._set_icon("syncing")
+        self.logger.info("Processing Hermes delta for %s (%d chars)", key, len(delta_text))
 
-            if update_summary(self.config, key, info, delta_text):
-                save_offset(key, new_offset)
-                self._set_icon("idle")
-            else:
-                self._set_icon("error")
+        if update_summary(self.config, key, info, delta_text):
+            save_offset(key, new_offset)
+            self._set_icon("idle")
+        else:
+            self._set_icon("error")
 
     def run(self, **kwargs):
         self._sessions = discover_active_sessions()
