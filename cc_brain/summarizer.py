@@ -50,9 +50,9 @@ def _format_started(sa):
 
 
 def _call_api(config, messages):
-    api_key = config.get("openrouter_api_key")
+    api_key = config.get("api_key") or config.get("openrouter_api_key")
     if not api_key:
-        logger.error("No OpenRouter API key configured")
+        logger.error("No API key configured")
         return None
 
     _session.headers.update({
@@ -65,14 +65,16 @@ def _call_api(config, messages):
     payload = {
         "model": config.get("model", "deepseek/deepseek-v4-flash"),
         "messages": messages,
-        "max_tokens": 2000,
+        "max_tokens": config.get("max_tokens", 2000),
         "temperature": 0.3,
     }
+    payload.update(config.get("extra_body", {}))
 
     for attempt in range(2):
         try:
+            base_url = config.get("api_base_url", "https://openrouter.ai/api/v1").rstrip("/")
             resp = _session.post(
-                "https://openrouter.ai/api/v1/chat/completions",
+                f"{base_url}/chat/completions",
                 json=payload,
                 timeout=60,
             )
@@ -88,6 +90,7 @@ def _call_api(config, messages):
 
 def _build_filename(session_info):
     project_name = Path(session_info.get("cwd", "unknown")).name
+    prefix = session_info.get("filename_prefix", "")
     sa = session_info.get("started_at")
     if isinstance(sa, (int, float)):
         ts = int(sa)
@@ -98,7 +101,7 @@ def _build_filename(session_info):
             ts = 0
     else:
         ts = 0
-    return f"{project_name}-{ts}.md"
+    return f"{prefix}{project_name}-{ts}.md"
 
 
 _filename_cache = {}
