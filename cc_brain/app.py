@@ -9,8 +9,9 @@ from cc_brain.config import load_config
 from cc_brain.extractor import extract_delta, save_offset
 from cc_brain.hermes_scanner import extract_hermes_delta
 from cc_brain.scanner import discover_active_sessions
-from cc_brain.summarizer import update_summary, get_summary_filename
+from cc_brain.summarizer import update_summary, get_summary_filename, _call_api
 from cc_brain.watcher import TranscriptWatcher
+from cc_brain.wiki import maybe_distill
 
 ICONS_DIR = Path(__file__).parent.parent / "icons"
 
@@ -158,8 +159,20 @@ class CCBrainApp(rumps.App):
         if update_summary(self.config, session_id, info, delta_text):
             save_offset(session_id, new_offset)
             self._set_icon("idle")
+            self._distill(session_id, info)
         else:
             self._set_icon("error")
+
+    def _distill(self, session_key, info):
+        """Stage 2: distill durable knowledge into the wiki (rate-limited inside)."""
+        try:
+            filename = get_summary_filename(session_key)
+            if not filename:
+                return
+            summary_path = Path(self.config["summary_dir"]) / filename
+            maybe_distill(self.config, session_key, info, summary_path, _call_api)
+        except Exception:
+            self.logger.exception("Wiki distill failed for %s", session_key)
 
     @rumps.timer(30)
     def _scan_sessions(self, _):
@@ -199,6 +212,7 @@ class CCBrainApp(rumps.App):
         if update_summary(self.config, key, info, delta_text):
             save_offset(key, new_offset)
             self._set_icon("idle")
+            self._distill(key, info)
         else:
             self._set_icon("error")
 
