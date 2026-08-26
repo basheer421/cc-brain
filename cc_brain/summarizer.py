@@ -49,41 +49,66 @@ def _format_started(sa):
     return "unknown"
 
 
+def _endpoints(config):
+    """Ordered (base_url, api_key, model, extra_body) endpoints: primary, then fallback."""
+    eps = []
+    primary_key = config.get("api_key") or config.get("openrouter_api_key")
+    if primary_key:
+        eps.append((
+            config.get("api_base_url", "https://openrouter.ai/api/v1"),
+            primary_key,
+            config.get("model", "deepseek/deepseek-v4-flash"),
+            config.get("extra_body", {}),
+        ))
+    # Fallback: OpenRouter, used when the primary (e.g. local vLLM on the
+    # tailnet) is unreachable — laptop off-network, server down, etc.
+    or_key = config.get("openrouter_api_key")
+    if or_key and config.get("api_base_url"):  # only if primary differs
+        eps.append((
+            "https://openrouter.ai/api/v1",
+            or_key,
+            config.get("fallback_model", "deepseek/deepseek-v4-flash"),
+            {},
+        ))
+    return eps
+
+
 def _call_api(config, messages):
-    api_key = config.get("api_key") or config.get("openrouter_api_key")
-    if not api_key:
+    endpoints = _endpoints(config)
+    if not endpoints:
         logger.error("No API key configured")
         return None
 
-    _session.headers.update({
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/cc-brain",
-        "X-Title": "cc-brain",
-    })
+    for base_url, api_key, model, extra_body in endpoints:
+        payload = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": config.get("max_tokens", 2000),
+            "temperature": 0.3,
+        }
+        payload.update(extra_body)
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/cc-brain",
+            "X-Title": "cc-brain",
+        }
 
-    payload = {
-        "model": config.get("model", "deepseek/deepseek-v4-flash"),
-        "messages": messages,
-        "max_tokens": config.get("max_tokens", 2000),
-        "temperature": 0.3,
-    }
-    payload.update(config.get("extra_body", {}))
-
-    for attempt in range(2):
-        try:
-            base_url = config.get("api_base_url", "https://openrouter.ai/api/v1").rstrip("/")
-            resp = _session.post(
-                f"{base_url}/chat/completions",
-                json=payload,
-                timeout=60,
-            )
-            resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"].strip()
-        except Exception as e:
-            logger.error("OpenRouter API error (attempt %d): %s", attempt + 1, e)
-            if attempt == 0:
-                time.sleep(5)
+        for attempt in range(2):
+            try:
+                resp = _session.post(
+                    f"{base_url.rstrip('/')}/chat/completions",
+                    json=payload,
+                    headers=headers,
+                    timeout=60,
+                )
+                resp.raise_for_status()
+                return resp.json()["choices"][0]["message"]["content"].strip()
+            except Exception as e:
+                logger.error("API error %s (attempt %d): %s", base_url, attempt + 1, e)
+                if attempt == 0:
+                    time.sleep(5)
+        logger.warning("Endpoint %s failed, trying fallback", base_url)
 
     return None
 
