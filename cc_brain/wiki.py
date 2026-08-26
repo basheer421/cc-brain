@@ -90,9 +90,10 @@ def maybe_distill(config, session_id, session_info, summary_path, call_api):
         return
 
     cwd = session_info.get("cwd", "") or ""
-    project = Path(cwd).name if cwd else "unknown"
-    if project in ("unknown", "") or cwd.startswith("hermes/"):
-        return
+    home = str(Path.home())
+    if not cwd or cwd.startswith("hermes/") or Path(cwd) == Path(home):
+        return  # no real project dir (bare-home chats, unknown sources)
+    project = Path(cwd).name
 
     min_interval = config.get("wiki_distill_min_interval_s", 900)
     state = _load_state()
