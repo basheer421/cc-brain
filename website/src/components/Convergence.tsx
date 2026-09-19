@@ -2,8 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 const MONO = 'font-mono'
 
-function useInView(threshold = 0.35) {
-  const ref = useRef<HTMLDivElement>(null)
+function useInView(ref: React.RefObject<HTMLDivElement | null>, threshold = 0.3) {
   const [inView, setInView] = useState(false)
 
   useEffect(() => {
@@ -20,46 +19,83 @@ function useInView(threshold = 0.35) {
     )
     obs.observe(el)
     return () => obs.disconnect()
-  }, [threshold])
+  }, [ref, threshold])
 
-  return { ref, inView }
+  return inView
 }
 
-function Pulse({
-  pathId,
-  dur,
-  begin,
-  color,
-}: {
-  pathId: string
-  dur: string
-  begin: string
-  color: string
-}) {
-  return (
-    <circle r="3" fill={color}>
-      <animateMotion dur={dur} begin={begin} repeatCount="indefinite" calcMode="linear">
-        <mpath href={`#${pathId}`} />
-      </animateMotion>
-      <animate
-        attributeName="opacity"
-        values="0;1;1;0"
-        keyTimes="0;0.1;0.85;1"
-        dur={dur}
-        begin={begin}
-        repeatCount="indefinite"
-      />
-    </circle>
-  )
-}
+const agents = [
+  { name: 'Claude Code', source: '~/.claude/**/*.jsonl', method: 'fsevents', color: '#d97757' },
+  { name: 'Hermes', source: '~/.hermes/state.db', method: 'shell hook', color: '#7d8fa8' },
+  { name: 'Pi', source: '~/.pi/agent/**/*.jsonl', method: 'fsevents', color: '#58a6ff' },
+]
+
+const outputs = [
+  { name: 'my-app-17...md', color: '#d97757' },
+  { name: 'h-my-app-...md', color: '#7d8fa8' },
+  { name: 'p-my-app-...md', color: '#58a6ff' },
+]
 
 export default function Convergence() {
-  const { ref, inView } = useInView()
+  const containerRef = useRef<HTMLDivElement>(null)
+  const inView = useInView(containerRef)
+  const agentRefs = useRef<(HTMLDivElement | null)[]>([])
+  const brainRef = useRef<HTMLDivElement>(null)
+  const summariesRef = useRef<HTMLDivElement>(null)
+  const [lines, setLines] = useState<{ x1: number; y1: number; x2: number; y2: number; color: string }[]>([])
+  const [outLine, setOutLine] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
+  const [svgSize, setSvgSize] = useState({ w: 0, h: 0 })
+
+  useEffect(() => {
+    const update = () => {
+      const container = containerRef.current
+      const brain = brainRef.current
+      const summaries = summariesRef.current
+      if (!container || !brain || !summaries) return
+
+      const cRect = container.getBoundingClientRect()
+      setSvgSize({ w: cRect.width, h: cRect.height })
+
+      const bRect = brain.getBoundingClientRect()
+      const brainTopCenter = { x: bRect.left - cRect.left + bRect.width / 2, y: bRect.top - cRect.top }
+      const brainBottomCenter = { x: bRect.left - cRect.left + bRect.width / 2, y: bRect.bottom - cRect.top }
+
+      const sRect = summaries.getBoundingClientRect()
+      const summariesTopCenter = { x: sRect.left - cRect.left + sRect.width / 2, y: sRect.top - cRect.top }
+
+      const newLines = agentRefs.current.map((el, i) => {
+        if (!el) return { x1: 0, y1: 0, x2: 0, y2: 0, color: agents[i].color }
+        const r = el.getBoundingClientRect()
+        return {
+          x1: r.left - cRect.left + r.width / 2,
+          y1: r.bottom - cRect.top,
+          x2: brainTopCenter.x,
+          y2: brainTopCenter.y,
+          color: agents[i].color,
+        }
+      })
+      setLines(newLines)
+      setOutLine({
+        x1: brainBottomCenter.x,
+        y1: brainBottomCenter.y,
+        x2: summariesTopCenter.x,
+        y2: summariesTopCenter.y,
+      })
+    }
+
+    update()
+    window.addEventListener('resize', update)
+    const t = setTimeout(update, 100)
+    return () => {
+      window.removeEventListener('resize', update)
+      clearTimeout(t)
+    }
+  }, [inView])
 
   return (
     <section className="bg-black py-20 px-6 overflow-hidden">
-      <div className="mx-auto max-w-4xl">
-        <div className="text-center mb-4">
+      <div className="mx-auto max-w-3xl">
+        <div className="text-center mb-12">
           <span
             className={`${MONO} text-[0.65rem] tracking-[0.2em] uppercase text-[#7d8fa8] font-medium`}
           >
@@ -69,151 +105,102 @@ export default function Convergence() {
           <h2 className={`${MONO} text-xl md:text-2xl font-bold text-white mb-3 leading-tight`}>
             Three agents. One memory.
           </h2>
-          <p
-            className={`${MONO} text-sm text-[#7d8590] leading-relaxed max-w-xl mx-auto`}
-          >
+          <p className={`${MONO} text-sm text-[#7d8590] leading-relaxed max-w-xl mx-auto`}>
             Claude Code writes JSONL. Hermes writes SQLite. Pi writes JSONL in
             its own format. CC Brain listens to all three and folds every session
             into the same living memory.
           </p>
         </div>
 
-        <div ref={ref} className="relative">
+        <div
+          ref={containerRef}
+          className={`relative transition-all duration-1000 ${inView ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}
+        >
+          {/* SVG lines layer */}
           <svg
-            viewBox="0 0 800 400"
-            className={`w-full h-auto transition-opacity duration-1000 ${
-              inView ? 'opacity-100' : 'opacity-0'
-            }`}
-            xmlns="http://www.w3.org/2000/svg"
+            className="absolute inset-0 pointer-events-none"
+            width={svgSize.w}
+            height={svgSize.h}
+            style={{ overflow: 'visible' }}
           >
-            <defs>
-              <path id="cc-path" d="M 155 120 C 260 120, 330 190, 400 190" />
-              <path id="hermes-path" d="M 400 120 L 400 155" />
-              <path id="pi-path" d="M 645 120 C 540 120, 470 190, 400 190" />
-              <path id="out-path" d="M 400 225 L 400 295" />
-              <linearGradient id="brainGlow" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#7d8fa8" stopOpacity="0.25" />
-                <stop offset="100%" stopColor="#7d8fa8" stopOpacity="0.05" />
-              </linearGradient>
-            </defs>
-
-            <use href="#cc-path" fill="none" stroke="#30363d" strokeWidth="1" />
-            <use href="#hermes-path" fill="none" stroke="#30363d" strokeWidth="1" />
-            <use href="#pi-path" fill="none" stroke="#30363d" strokeWidth="1" />
-            <use href="#out-path" fill="none" stroke="#30363d" strokeWidth="1" strokeDasharray="3 4" />
-
-            {inView && (
-              <>
-                <Pulse pathId="cc-path" dur="2.6s" begin="0s" color="#d97757" />
-                <Pulse pathId="cc-path" dur="2.6s" begin="1.3s" color="#d97757" />
-                <Pulse pathId="hermes-path" dur="1.2s" begin="0.65s" color="#7d8fa8" />
-                <Pulse pathId="hermes-path" dur="1.2s" begin="1.85s" color="#7d8fa8" />
-                <Pulse pathId="pi-path" dur="2.6s" begin="0.4s" color="#58a6ff" />
-                <Pulse pathId="pi-path" dur="2.6s" begin="1.7s" color="#58a6ff" />
-                <Pulse pathId="out-path" dur="1.8s" begin="0.9s" color="#e6ecef" />
-              </>
+            {lines.map((l, i) => (
+              <line
+                key={i}
+                x1={l.x1} y1={l.y1}
+                x2={l.x2} y2={l.y2}
+                stroke={l.color}
+                strokeWidth="1"
+                strokeOpacity="0.5"
+              />
+            ))}
+            {outLine && (
+              <line
+                x1={outLine.x1} y1={outLine.y1}
+                x2={outLine.x2} y2={outLine.y2}
+                stroke="#30363d"
+                strokeWidth="1"
+                strokeDasharray="4 4"
+              />
             )}
-
-            {/* Claude Code node */}
-            <g>
-              <rect x="55" y="82" width="140" height="76" rx="6" fill="#0a0a0a" stroke="#30363d" />
-              <text x="125" y="112" textAnchor="middle" className="fill-white" fontFamily="ui-monospace, monospace" fontSize="13" fontWeight="700">
-                Claude Code
-              </text>
-              <text x="125" y="132" textAnchor="middle" fill="#7d8590" fontFamily="ui-monospace, monospace" fontSize="9">
-                ~/.claude/**.jsonl
-              </text>
-              <text x="125" y="146" textAnchor="middle" fill="#57606a" fontFamily="ui-monospace, monospace" fontSize="8">
-                fsevents · debounce
-              </text>
-            </g>
-
-            {/* Hermes node */}
-            <g>
-              <rect x="330" y="62" width="140" height="76" rx="6" fill="#0a0a0a" stroke="#30363d" />
-              <text x="400" y="92" textAnchor="middle" className="fill-white" fontFamily="ui-monospace, monospace" fontSize="13" fontWeight="700">
-                Hermes
-              </text>
-              <text x="400" y="112" textAnchor="middle" fill="#7d8590" fontFamily="ui-monospace, monospace" fontSize="9">
-                ~/.hermes/state.db
-              </text>
-              <text x="400" y="126" textAnchor="middle" fill="#57606a" fontFamily="ui-monospace, monospace" fontSize="8">
-                post_llm_call hook
-              </text>
-            </g>
-
-            {/* Pi node */}
-            <g>
-              <rect x="605" y="82" width="140" height="76" rx="6" fill="#0a0a0a" stroke="#30363d" />
-              <text x="675" y="112" textAnchor="middle" className="fill-white" fontFamily="ui-monospace, monospace" fontSize="13" fontWeight="700">
-                Pi
-              </text>
-              <text x="675" y="132" textAnchor="middle" fill="#7d8590" fontFamily="ui-monospace, monospace" fontSize="9">
-                ~/.pi/agent/**.jsonl
-              </text>
-              <text x="675" y="146" textAnchor="middle" fill="#57606a" fontFamily="ui-monospace, monospace" fontSize="8">
-                fsevents · debounce
-              </text>
-            </g>
-
-            {/* CC Brain node */}
-            <g>
-              <circle cx="400" cy="190" r="36" fill="url(#brainGlow)" stroke="#7d8fa8" strokeOpacity="0.6">
-                {inView && (
-                  <animate attributeName="r" values="36;38;36" dur="2.6s" repeatCount="indefinite" />
-                )}
-              </circle>
-              <text x="400" y="186" textAnchor="middle" className="fill-white" fontFamily="ui-monospace, monospace" fontSize="11" fontWeight="700">
-                CC Brain
-              </text>
-              <text x="400" y="200" textAnchor="middle" fill="#7d8fa8" fontFamily="ui-monospace, monospace" fontSize="8">
-                🧠 menu bar
-              </text>
-            </g>
-
-            {/* Summaries node */}
-            <g>
-              <rect x="240" y="300" width="320" height="58" rx="6" fill="#0a0a0a" stroke="#30363d" />
-              <text x="400" y="323" textAnchor="middle" fill="#e6ecef" fontFamily="ui-monospace, monospace" fontSize="10" fontWeight="700">
-                ~/.cc-brain/summaries/
-              </text>
-              <text x="310" y="342" textAnchor="middle" fill="#d97757" fontFamily="ui-monospace, monospace" fontSize="9">
-                my-app-17...md
-              </text>
-              <text x="400" y="342" textAnchor="middle" fill="#7d8fa8" fontFamily="ui-monospace, monospace" fontSize="9">
-                h-my-app-...md
-              </text>
-              <text x="493" y="342" textAnchor="middle" fill="#58a6ff" fontFamily="ui-monospace, monospace" fontSize="9">
-                p-my-app-...md
-              </text>
-            </g>
-
-            {/* Legend */}
-            <g>
-              <circle cx="260" cy="385" r="3" fill="#d97757" />
-              <text x="270" y="388" fill="#57606a" fontFamily="ui-monospace, monospace" fontSize="8">
-                Claude Code
-              </text>
-              <circle cx="370" cy="385" r="3" fill="#7d8fa8" />
-              <text x="380" y="388" fill="#57606a" fontFamily="ui-monospace, monospace" fontSize="8">
-                Hermes
-              </text>
-              <circle cx="455" cy="385" r="3" fill="#58a6ff" />
-              <text x="465" y="388" fill="#57606a" fontFamily="ui-monospace, monospace" fontSize="8">
-                Pi
-              </text>
-            </g>
           </svg>
+
+          {/* Agent sources */}
+          <div className="grid grid-cols-3 gap-3 mb-16">
+            {agents.map((a, i) => (
+              <div
+                key={a.name}
+                ref={(el) => { agentRefs.current[i] = el; }}
+                className="border border-[#1e1e1e] rounded-lg p-4 text-center"
+              >
+                <div className={`${MONO} text-sm font-bold text-white mb-1`}>{a.name}</div>
+                <div className={`${MONO} text-[10px] text-[#7d8590]`}>{a.source}</div>
+                <div className={`${MONO} text-[10px] text-[#57606a]`}>{a.method}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* CC Brain center */}
+          <div className="flex justify-center mb-16">
+            <div
+              ref={brainRef}
+              className="border border-[#7d8fa8]/40 rounded-lg px-12 py-4 text-center bg-gradient-to-b from-[#7d8fa8]/10 to-transparent"
+            >
+              <div className={`${MONO} text-sm font-bold text-white`}>CC Brain</div>
+              <div className={`${MONO} text-[10px] text-[#7d8fa8]`}>menu bar app</div>
+            </div>
+          </div>
+
+          {/* Summaries output */}
+          <div
+            ref={summariesRef}
+            className="border border-[#1e1e1e] rounded-lg p-5 text-center"
+          >
+            <div className={`${MONO} text-xs font-bold text-[#e6ecef] mb-2`}>~/.cc-brain/summaries/</div>
+            <div className="flex justify-center gap-4">
+              {outputs.map((o) => (
+                <span key={o.name} className={`${MONO} text-[11px]`} style={{ color: o.color }}>
+                  {o.name}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* Legend */}
+          <div className="flex justify-center gap-6 mt-6">
+            {agents.map((a) => (
+              <div key={a.name} className="flex items-center gap-1.5">
+                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: a.color }} />
+                <span className={`${MONO} text-[10px] text-[#57606a]`}>{a.name}</span>
+              </div>
+            ))}
+          </div>
         </div>
 
-        <p
-          className={`${MONO} text-center text-xs text-[#57606a] leading-relaxed max-w-lg mx-auto mt-4`}
-        >
+        <p className={`${MONO} text-center text-xs text-[#57606a] leading-relaxed max-w-lg mx-auto mt-8`}>
           Event-driven on all sides. No polling. Each agent's summaries carry a
           unique prefix (<span className="text-[#7d8fa8]">h-</span> for Hermes,{' '}
           <span className="text-[#58a6ff]">p-</span> for Pi), so every agent's
-          sessions live side by side and every new chat picks up where any of
-          them left off.
+          sessions live side by side.
         </p>
       </div>
     </section>
