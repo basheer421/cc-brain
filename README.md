@@ -1,10 +1,12 @@
 # CC Brain
 
-Cross-session awareness for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — and now [Hermes Agent](https://hermes-agent.nousresearch.com). A macOS menu bar app that watches your agent sessions and generates living Markdown summaries in real-time.
+Session memory for AI coding agents. A macOS menu bar app that watches your agent sessions and generates living Markdown summaries in real-time.
+
+Currently supports **Claude Code**, **Hermes**, and **Pi** — with more agents easy to add.
 
 **Website:** [cc-brain.bachir.me](https://cc-brain.bachir.me)
 
-Every time you exchange messages with Claude Code or Hermes, CC Brain extracts the new conversation turns and sends them to an LLM (any OpenAI-compatible endpoint — OpenRouter, or your own local vLLM) to incrementally update a structured summary file.
+Every time you exchange messages with a supported agent, CC Brain extracts the new conversation turns and sends them to an LLM (any OpenAI-compatible endpoint) to incrementally update a structured summary file.
 
 <p align="center">
   <img src="docs/menu-bar.png" alt="CC Brain in the macOS menu bar" width="400">
@@ -38,30 +40,40 @@ The installer handles dependencies, prompts for your API key, builds the app, an
 
 - macOS 12+
 - Python 3.10+
-- An LLM API key ([OpenRouter](https://openrouter.ai/keys), or any OpenAI-compatible endpoint)
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and/or [Hermes Agent](https://hermes-agent.nousresearch.com) installed
+- An LLM API key (any OpenAI-compatible endpoint — [OpenRouter](https://openrouter.ai/keys), [OpenCode Go](https://opencode.ai/docs/go/), [DeepSeek](https://platform.deepseek.com/), or your own vLLM)
+- At least one supported agent installed
+
+## Supported agents
+
+| Agent | Source | Detection | Summary prefix |
+|-------|--------|-----------|----------------|
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | `~/.claude/projects/**/*.jsonl` | FSEvents file watcher | *(none)* |
+| [Hermes](https://hermes-agent.nousresearch.com) | `~/.hermes/state.db` (read-only) | `post_llm_call` shell hook → trigger file | `h-` |
+| [Pi](https://opencode.ai) | `~/.pi/agent/sessions/**/*.jsonl` | FSEvents file watcher | `p-` |
+
+All sources are event-driven — no polling.
 
 ## How it works
 
-Two sources, one brain. Both are event-driven — no polling.
-
 ```
-Claude Code session (JSONL log)          Hermes session (SQLite state.db)
-        │                                        │
-        ▼                                        ▼
-   File watcher (watchdog + FSEvents)      post_llm_call shell hook
-        │  debounce 3s                          │  touches ~/.cc-brain/triggers/hermes-<id>
-        │                                        ▼
-        │                                  File watcher (same observer)
-        ▼                                        ▼
-   Delta extractor (new turns only)   ◄──────────┘
-        │
-        ▼
-   LLM (OpenAI-compatible API)
-        │
-        ▼
-   ~/.cc-brain/summaries/<project>-<timestamp>.md      ← Claude Code
-   ~/.cc-brain/summaries/h-<project>-<timestamp>.md    ← Hermes (h- prefix)
+Claude Code (JSONL)     Hermes (SQLite)      Pi (JSONL)
+       │                      │                   │
+       ▼                      ▼                   ▼
+  File watcher         post_llm_call hook    File watcher
+  (watchdog)           → trigger file        (watchdog)
+       │                      │                   │
+       └──────────────────────┼───────────────────┘
+                              ▼
+                     Delta extractor (new turns only)
+                              │
+                              ▼
+                     LLM (OpenAI-compatible API)
+                              │
+                              ▼
+              ~/.cc-brain/summaries/
+              ├── my-app-17...md          ← Claude Code
+              ├── h-my-app-17...md        ← Hermes
+              └── p-my-app-17...md        ← Pi
 ```
 
 Each summary is a living document that gets rewritten with every update:
@@ -91,24 +103,6 @@ Writing tests for the callback endpoint.
 - src/middleware/auth.ts (modified)
 ```
 
-## Hermes integration
-
-CC Brain also syncs [Hermes Agent](https://hermes-agent.nousresearch.com) sessions — desktop app, CLI, and gateway alike. Hermes summaries get an `h-` filename prefix so both agents' sessions live side by side in one folder.
-
-The integration is event-driven via Hermes's native [shell hooks](https://hermes-agent.nousresearch.com/docs/user-guide/features/hooks):
-
-1. A `post_llm_call` shell hook (`~/.hermes/agent-hooks/ccbrain-notify.sh`) fires after every agent turn and touches `~/.cc-brain/triggers/hermes-<session_id>`.
-2. CC Brain's existing watchdog observer picks up the trigger and reads only that session's new messages from `~/.hermes/state.db` (read-only — never writes to Hermes's database).
-
-Register the hook once:
-
-```bash
-hermes config set hooks.post_llm_call \
-  '[{"command": "~/.hermes/agent-hooks/ccbrain-notify.sh", "timeout": 10, "hooks_auto_accept": true}]'
-```
-
-If Hermes isn't installed, the trigger directory stays empty and CC Brain behaves exactly as before.
-
 ## Configuration
 
 Config lives at `~/.cc-brain/config.json`:
@@ -116,11 +110,12 @@ Config lives at `~/.cc-brain/config.json`:
 ```json
 {
   "api_key": "sk-...",
-  "api_base_url": "https://openrouter.ai/api/v1",
-  "model": "deepseek/deepseek-v4-flash",
+  "api_base_url": "https://opencode.ai/zen/go/v1",
+  "model": "deepseek-v4.1-flash",
   "extraction_mode": "smart",
   "debounce_seconds": 3,
-  "max_tokens": 2000,
+  "max_tokens": 4000,
+  "extra_headers": {},
   "extra_body": {},
   "summary_dir": "~/.cc-brain/summaries",
   "error_log": "~/.cc-brain/logs/errors.log"
@@ -129,21 +124,42 @@ Config lives at `~/.cc-brain/config.json`:
 
 | Field | Description |
 |-------|-------------|
-| `api_key` | API key for your endpoint. `openrouter_api_key` still works as a fallback; env var `OPENROUTER_API_KEY` overrides. |
-| `api_base_url` | Any OpenAI-compatible endpoint. Default: `https://openrouter.ai/api/v1`. Point it at your own vLLM/llama.cpp server to summarize for free. |
-| `model` | Model name at that endpoint. Default: `deepseek/deepseek-v4-flash`. |
+| `api_key` | API key for your endpoint. |
+| `api_base_url` | Any OpenAI-compatible endpoint. |
+| `model` | Model name at that endpoint. |
 | `extraction_mode` | `smart` (default) skips tool calls and thinking blocks. `full` includes them. |
 | `debounce_seconds` | Wait time after last file change before processing. |
 | `max_tokens` | Completion budget for summaries. Default: `2000`. |
-| `extra_body` | Extra JSON merged into the API payload. E.g. `{"chat_template_kwargs": {"enable_thinking": false}}` to disable thinking mode on Qwen3-style models served by vLLM. |
+| `extra_headers` | Extra HTTP headers merged into API requests. E.g. `{"x-opencode-session": "cc-brain"}` for OpenCode Go. |
+| `extra_body` | Extra JSON merged into the API payload. E.g. `{"chat_template_kwargs": {"enable_thinking": false}}` for Qwen3-style models on vLLM. |
 
 Toggle between `smart` and `full` mode from the menu bar dropdown.
 
-### Local model example (vLLM)
+### Endpoint examples
 
+**OpenCode Go** (DeepSeek Flash for $10/mo):
 ```json
 {
-  "api_key": "your-key",
+  "api_key": "sk-...",
+  "api_base_url": "https://opencode.ai/zen/go/v1",
+  "model": "deepseek-v4.1-flash",
+  "extra_headers": { "x-opencode-session": "cc-brain" }
+}
+```
+
+**OpenRouter:**
+```json
+{
+  "api_key": "sk-or-...",
+  "api_base_url": "https://openrouter.ai/api/v1",
+  "model": "deepseek/deepseek-v4-flash"
+}
+```
+
+**Local vLLM:**
+```json
+{
+  "api_key": "none",
   "api_base_url": "http://your-gpu-box:4000/v1",
   "model": "Qwen3-27B",
   "max_tokens": 4000,
@@ -151,7 +167,20 @@ Toggle between `smart` and `full` mode from the menu bar dropdown.
 }
 ```
 
-Thinking models emit `reasoning_content` with a null `content` unless thinking is disabled — hence the `extra_body` knob.
+## Hermes integration
+
+CC Brain syncs [Hermes Agent](https://hermes-agent.nousresearch.com) sessions via native shell hooks. Register the hook once:
+
+```bash
+hermes config set hooks.post_llm_call \
+  '[{"command": "~/.hermes/agent-hooks/ccbrain-notify.sh", "timeout": 10, "hooks_auto_accept": true}]'
+```
+
+If Hermes isn't installed, the trigger directory stays empty and CC Brain behaves exactly as before.
+
+## Pi integration
+
+CC Brain watches Pi sessions automatically — no setup needed. It monitors `~/.pi/agent/sessions/` for JSONL changes (top-level sessions only; subagent runs and forks are skipped). If Pi isn't installed, the directory doesn't exist and CC Brain ignores it.
 
 ## Menu bar
 
@@ -193,14 +222,25 @@ brew uninstall cc-brain
 
 ## Architecture
 
-Single Python process with six subsystems:
+Single Python process with seven subsystems:
 
-- **SessionScanner** — polls `~/.claude/sessions/*.json` every 30s for active sessions (menu bar list)
-- **TranscriptWatcher** — `watchdog` (FSEvents) detects Claude Code JSONL changes *and* Hermes trigger files with debouncing
+- **SessionScanner** — polls `~/.claude/sessions/*.json` every 30s for active Claude Code sessions (menu bar list)
+- **TranscriptWatcher** — `watchdog` (FSEvents) detects Claude Code JSONL changes, Hermes trigger files, and Pi session JSONL changes, all with debouncing
 - **Extractor** — parses new JSONL lines, extracts user/assistant text, tracks byte offsets
 - **HermesScanner** — reads new turns for a triggered session from `~/.hermes/state.db` (read-only SQLite), tracks message-id offsets
+- **PiScanner** — reads new turns from Pi session JSONLs, handles Pi's `type: "message"` format, tracks byte offsets with `pi:` prefix
 - **Summarizer** — calls the configured LLM with previous summary + new delta, writes updated `.md`
 - **MenuBarApp** — `rumps` ties it together with a native menu bar icon
+
+## Adding a new agent
+
+CC Brain is designed to be extended. Each agent source needs:
+
+1. A **scanner** module that knows where the agent stores sessions and how to extract user/assistant turns
+2. A **watcher** hook — either a file watcher path or a trigger mechanism
+3. A **filename prefix** (e.g. `p-` for Pi) to distinguish summaries
+
+See `cc_brain/pi_scanner.py` for a clean example.
 
 ## Contributing
 

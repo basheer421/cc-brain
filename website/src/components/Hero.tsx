@@ -1,8 +1,24 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import Dither from './Dither'
 import BlurText from './BlurText'
 import InstallCommand from './InstallCommand'
+import AgentTypewriter from './AgentTypewriter'
+import './AgentTypewriter.css'
 import BrainIcon from '../assets/brain-fill.svg?raw'
+
+function SublineWithTypewriter({ onReady }: { onReady: () => void }) {
+  useEffect(() => {
+    const t = setTimeout(onReady, 600)
+    return () => clearTimeout(t)
+  }, [onReady])
+
+  return (
+    <div className="text-base md:text-lg font-mono text-white/70 max-w-xl mb-10 animate-fade-in">
+      It watches your <AgentTypewriter /> sessions and writes living
+      summaries. Next chat picks up where you left off.
+    </div>
+  )
+}
 
 export default function Hero() {
   const [showSubline, setShowSubline] = useState(false)
@@ -52,16 +68,7 @@ export default function Hero() {
           onAnimationComplete={handleHeadlineComplete}
         />
 
-        {showSubline && (
-          <BlurText
-            text="It watches your Claude Code and Hermes sessions and writes living summaries. Next chat picks up where you left off."
-            delay={50}
-            animateBy="words"
-            direction="bottom"
-            className="text-base md:text-lg font-mono text-white/70 max-w-xl mb-10"
-            onAnimationComplete={handleSublineComplete}
-          />
-        )}
+        {showSubline && <SublineWithTypewriter onReady={handleSublineComplete} />}
 
         <div
           className={`w-full max-w-lg transition-all duration-500 ${

@@ -60,12 +60,12 @@ export default function Footer() {
                 basheer421
               </a>
               <a
-                href="https://openrouter.ai"
+                href="https://opencode.ai"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-[#7d8590] hover:text-white transition-colors"
               >
-                OpenRouter
+                OpenCode
               </a>
             </div>
           </nav>
@@ -73,7 +73,7 @@ export default function Footer() {
 
         <div className="border-t border-white/5 mt-10 pt-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <p className="font-mono text-xs text-[#484f58]">
-            Open source. Built for developers who talk to Claude Code all day.
+            Open source. Built for developers who talk to AI coding agents all day.
           </p>
           <p className="font-mono text-xs text-[#484f58]">
             Illustrations by{' '}

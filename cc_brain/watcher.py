@@ -48,7 +48,7 @@ class DebouncedHandler(FileSystemEventHandler):
 
 
 class TranscriptWatcher:
-    def __init__(self, callback, debounce_seconds=3, hermes_callback=None):
+    def __init__(self, callback, debounce_seconds=3, hermes_callback=None, pi_callback=None):
         watch_path = Path.home() / ".claude" / "projects"
         self._observer = Observer()
         self._handler = DebouncedHandler(callback, debounce_seconds)
@@ -62,12 +62,22 @@ class TranscriptWatcher:
                 hermes_callback, debounce_seconds, suffix=""
             )
             self._hermes_path = str(triggers)
+        self._pi_handler = None
+        self._pi_path = None
+        if pi_callback:
+            pi_sessions = Path.home() / ".pi" / "agent" / "sessions"
+            if pi_sessions.exists():
+                self._pi_handler = DebouncedHandler(pi_callback, debounce_seconds)
+                self._pi_path = str(pi_sessions)
 
     def start(self):
         self._observer.schedule(self._handler, self._watch_path, recursive=True)
         if self._hermes_handler:
             self._observer.schedule(self._hermes_handler, self._hermes_path, recursive=False)
             logger.info("Watching %s for Hermes triggers", self._hermes_path)
+        if self._pi_handler:
+            self._observer.schedule(self._pi_handler, self._pi_path, recursive=True)
+            logger.info("Watching %s for Pi session changes", self._pi_path)
         self._observer.daemon = True
         self._observer.start()
         logger.info("Watching %s for JSONL changes", self._watch_path)

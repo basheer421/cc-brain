@@ -93,6 +93,7 @@ def _call_api(config, messages):
             "HTTP-Referer": "https://github.com/cc-brain",
             "X-Title": "cc-brain",
         }
+        headers.update(config.get("extra_headers", {}))
 
         for attempt in range(2):
             try:
@@ -103,7 +104,9 @@ def _call_api(config, messages):
                     timeout=60,
                 )
                 resp.raise_for_status()
-                return resp.json()["choices"][0]["message"]["content"].strip()
+                msg = resp.json()["choices"][0]["message"]
+                text = msg.get("content") or msg.get("reasoning_content") or ""
+                return text.strip()
             except Exception as e:
                 logger.error("API error %s (attempt %d): %s", base_url, attempt + 1, e)
                 if attempt == 0:
