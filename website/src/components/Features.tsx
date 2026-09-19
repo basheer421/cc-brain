@@ -16,14 +16,14 @@ const features: Feature[] = [
     label: 'Always watching',
     heading: 'Lives in your menu bar.',
     description:
-      'A native macOS app that watches your agent sessions — Claude Code via filesystem events, Hermes via lifecycle hooks. No browser extensions, no plugins, no configuration beyond an API key.',
+      'A native macOS app that watches your agent sessions. No browser extensions, no plugins, no configuration beyond an API key.',
     illustration: chilling,
   },
   {
     label: 'Not a log dump',
     heading: 'Summaries that rewrite themselves.',
     description:
-      'Every conversation turn triggers an incremental rewrite. Goal, progress, key decisions, current state — a living document, not a static export.',
+      'Every conversation turn triggers an incremental rewrite. Goal, progress, key decisions, current state. A living document, not a static export.',
     illustration: absurdCh1,
     isAbsurd: true,
   },
@@ -38,7 +38,7 @@ const features: Feature[] = [
     label: 'Your model, your cost',
     heading: 'Any OpenAI-compatible endpoint.',
     description:
-      'OpenRouter by default — or point it at your own vLLM box and summarize for free. Swap models with one config change. Summarization doesn\'t need frontier intelligence.',
+      'Any OpenAI-compatible endpoint. Point it at OpenRouter, DeepSeek, or your own vLLM box. Swap models with one config change.',
     illustration: unboxing,
   },
 ]

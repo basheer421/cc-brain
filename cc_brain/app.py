@@ -8,6 +8,7 @@ import rumps
 from cc_brain.config import load_config
 from cc_brain.extractor import extract_delta, save_offset
 from cc_brain.hermes_scanner import extract_hermes_delta
+from cc_brain.pi_scanner import discover_pi_sessions, extract_pi_delta, PI_SESSIONS_DIR
 from cc_brain.scanner import discover_active_sessions
 from cc_brain.summarizer import update_summary, get_summary_filename, _call_api
 from cc_brain.watcher import TranscriptWatcher
@@ -80,7 +81,9 @@ class CCBrainApp(rumps.App):
             callback=self._on_jsonl_changed,
             debounce_seconds=self.config.get("debounce_seconds", 3),
             hermes_callback=self._on_hermes_trigger,
+            pi_callback=self._on_pi_jsonl_changed,
         )
+        self._pi_sessions = {}
 
     def _set_icon(self, state):
         icon_name = "brain-active.png" if state == "syncing" else "brain-idle.png"
@@ -181,6 +184,54 @@ class CCBrainApp(rumps.App):
             self._refresh_sessions_menu()
         except Exception:
             self.logger.exception("Error scanning sessions")
+
+    def _on_pi_jsonl_changed(self, jsonl_path):
+        """Called from watchdog when a Pi session JSONL changes."""
+        # Only process top-level session files (skip subagent/fork subdirs)
+        p = Path(jsonl_path)
+        try:
+            rel = p.relative_to(PI_SESSIONS_DIR)
+        except ValueError:
+            return
+        if len(rel.parts) != 2:
+            return
+        t = threading.Thread(target=self._process_pi_delta, args=(jsonl_path,), daemon=True)
+        t.start()
+
+    def _process_pi_delta(self, jsonl_path):
+        p = Path(jsonl_path)
+        # Build offset key from session header or filename
+        from cc_brain.pi_scanner import _read_session_header
+        header = _read_session_header(jsonl_path)
+        session_id = header.get("id", p.stem) if header else p.stem
+        key = f"pi:{session_id}"
+
+        cwd = header.get("cwd", "") if header else ""
+        info = {
+            "cwd": cwd,
+            "name": Path(cwd).name if cwd else "pi",
+            "jsonl_path": str(p),
+            "started_at": header.get("timestamp", "") if header else "",
+            "filename_prefix": "p-",
+        }
+
+        self._pi_sessions[key] = info
+        self._sessions.update(self._pi_sessions)
+        self._refresh_sessions_menu()
+
+        delta_text, new_offset = extract_pi_delta(jsonl_path, key)
+        if not delta_text:
+            return
+
+        self._set_icon("syncing")
+        self.logger.info("Processing Pi delta for %s (%d chars)", key, len(delta_text))
+
+        if update_summary(self.config, key, info, delta_text):
+            save_offset(key, new_offset)
+            self._set_icon("idle")
+            self._distill(key, info)
+        else:
+            self._set_icon("error")
 
     def _on_hermes_trigger(self, trigger_path):
         """Called (debounced) when a Hermes hook touches a trigger file."""
