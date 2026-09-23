@@ -53,7 +53,7 @@ def load_config(path=None):
     if key := os.environ.get("OPENROUTER_API_KEY"):
         config.setdefault("openrouter_api_key", key)
 
-    for d in ("summary_dir", "error_log", "wiki_dir", "queue_dir", "state_dir"):
+    for d in ("summary_dir", "error_log", "wiki_dir", "queue_dir", "state_dir", "search_db", "pid_file"):
         config[d] = str(Path(config[d]).expanduser())
 
     Path(config["summary_dir"]).mkdir(parents=True, exist_ok=True)
