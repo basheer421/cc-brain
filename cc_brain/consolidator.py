@@ -363,6 +363,11 @@ def process_suggestion(config, suggestion, call_api):
     if not existing:
         page_path.parent.mkdir(parents=True, exist_ok=True)
         page_path.write_text(content if content.endswith("\n") else content + "\n")
+    elif suggest_type == "add":
+        # Append-only: an LLM rewrite of a large page truncates it.
+        today = datetime.now().strftime("%Y-%m-%d")
+        entry = "- " + content.strip().replace("\n", "\n  ") + f" _(last: {today})_\n"
+        page_path.write_text(existing.rstrip("\n") + "\n" + entry)
     else:
         messages = [
             {"role": "system", "content": MERGE_SYSTEM_PROMPT},
@@ -378,6 +383,9 @@ def process_suggestion(config, suggestion, call_api):
         if not result or result == "NO_CHANGE":
             logger.info("Suggestion adds nothing new to %s", target)
             return True
+        if len(result) < 0.9 * len(existing):
+            logger.warning("Merge for %s shrank page %d -> %d chars, rejected", target, len(existing), len(result))
+            return True  # drop from queue; page untouched
         page_path.write_text(result if result.endswith("\n") else result + "\n")
 
     _git(wiki_dir, "add", "-A")
