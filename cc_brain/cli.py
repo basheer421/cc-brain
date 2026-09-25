@@ -175,6 +175,32 @@ def queue(ctx):
         click.echo(f"  {item['content'][:120]}...")
 
 
+@main.command("migrate-pi-memory")
+@click.option("--apply", "do_apply", is_flag=True, help="Write pages and commit (default: dry run)")
+@click.pass_context
+def migrate_pi_memory(ctx, do_apply):
+    """Copy pi-hermes-memory stores into llm-wiki pages."""
+    import subprocess
+    from .migrate import plan, apply
+
+    wiki_dir = ctx.obj["config"]["wiki_dir"]
+    pages = plan(wiki_dir)
+    for rel, body in pages.items():
+        click.echo(f"{rel}: {body.count(chr(10) + '- ')} entries, {len(body)} chars")
+    if not pages:
+        click.echo("Nothing to migrate.")
+        return
+    if not do_apply:
+        click.echo("Dry run. Re-run with --apply to write.")
+        return
+    apply(wiki_dir, pages)
+    subprocess.run(["git", "-C", wiki_dir, "add", "-A"], check=True)
+    subprocess.run(["git", "-C", wiki_dir, "commit", "-qm", "migrate: pi-hermes-memory stores"], check=True)
+    ws = WikiSearch(ctx.obj["config"]["search_db"], wiki_dir)
+    click.echo(f"Wrote {len(pages)} pages, reindexed {ws.rebuild()} pages.")
+    ws.close()
+
+
 @main.command()
 @click.pass_context
 def mcp(ctx):

@@ -97,6 +97,12 @@ class WikiSearch:
         conn.commit()
 
     def search(self, query, limit=5, scope=None):
+        import re
+
+        tokens = re.findall(r"\w+", query)
+        if not tokens:
+            return []
+        query = " OR ".join(f'"{t}"' for t in tokens)
         conn = self._connect()
 
         scope_filter = ""
