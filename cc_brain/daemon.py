@@ -13,13 +13,12 @@ from watchdog.observers import Observer
 
 from .config import load_config, get_llm_config
 from .consolidator import consolidate, process_suggestion
+from .pi_sessions import PI_SESSIONS_DIR, PiSessionTracker, is_session_file
 from .queue import list_pending, remove
 from .search import WikiSearch
 
 logger = logging.getLogger("cc-brain")
 
-# Directories to watch for session completions
-PI_SESSION_DIR = Path.home() / ".pi" / "sessions"
 HERMES_SESSION_DIR = Path.home() / ".hermes" / "sessions"
 
 
@@ -76,9 +75,10 @@ def _read_session_info(session_dir):
 
 
 class SessionHandler(FileSystemEventHandler):
-    def __init__(self, config, search):
+    def __init__(self, config, search, pi_tracker):
         self._config = config
         self._search = search
+        self._pi = pi_tracker
         self._processed = set()
         self._debounce = {}
 
@@ -90,6 +90,9 @@ class SessionHandler(FileSystemEventHandler):
 
     def _handle(self, path):
         p = Path(path)
+        if is_session_file(p):
+            self._pi.mark(p)
+            return
         if p.name not in ("summary.md", "summary.txt", "session-summary.md"):
             return
 
@@ -176,9 +179,16 @@ def run_daemon(config_path=None):
 
     # Set up watchers
     observer = Observer()
-    handler = SessionHandler(config, search)
+    pi_tracker = PiSessionTracker(config, _call_api, consolidate)
+    handler = SessionHandler(config, search, pi_tracker)
 
-    for d in (PI_SESSION_DIR, HERMES_SESSION_DIR):
+    if PI_SESSIONS_DIR.exists():
+        cutoff = time.time() - 3600
+        for f in PI_SESSIONS_DIR.glob("*/*.jsonl"):
+            if f.stat().st_mtime > cutoff:
+                pi_tracker.mark(f)
+
+    for d in (PI_SESSIONS_DIR, HERMES_SESSION_DIR):
         if d.exists():
             observer.schedule(handler, str(d), recursive=True)
             logger.info("Watching %s", d)
@@ -188,8 +198,9 @@ def run_daemon(config_path=None):
 
     try:
         while True:
+            pi_tracker.process()
             _process_queue(config, search)
-            time.sleep(60)
+            time.sleep(30)
     except KeyboardInterrupt:
         pass
     finally:

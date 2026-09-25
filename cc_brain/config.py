@@ -2,6 +2,14 @@ import json
 import os
 from pathlib import Path
 
+_ENV_FILE = Path.home() / ".cc-brain" / ".env"
+if _ENV_FILE.exists():
+    for line in _ENV_FILE.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            os.environ[k.strip()] = v.strip()
+
 CONFIG_PATH = Path.home() / ".cc-brain" / "config.json"
 
 DEFAULTS = {
