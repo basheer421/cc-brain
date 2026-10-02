@@ -70,7 +70,7 @@ Two deliberate **non-choices**:
 ## 5. Architecture
 
 ```
-Pi / Claude Code / Hermes sessions ──watchdog──▶ summarizer (bounded; truncated output never saved)
+Pi / Hermes sessions ──watchdog──▶ summarizer (bounded; truncated output never saved)
                                                    │
                                                    ├─▶ episodes   (chunks of each summary, by day/project)
                                                    │
@@ -261,7 +261,12 @@ Everything above was measured over hours. The open questions are about **weeks**
 
 ## 12. Operating notes
 
-- Daemon: a launchd agent (template `io.ccbrain.agent.plist`). Restart with `launchctl kickstart -k gui/$(id -u)/<label>`.
+- Install: `install.sh` installs the binary only (uv tool, else pip in a private venv; it never installs uv itself). `cc-brain init` does
+  the machine setup and is idempotent; `cc-brain doctor` checks it. Choices: the CLI owns setup so it can be tested against a temp HOME;
+  the Pi extension is a symlink into the installed package so upgrades reach Pi; agent instruction files are never edited.
+- Daemon: launchd agent `io.ccbrain.daemon` (systemd user unit on Linux), written by `init`. Restart with
+  `launchctl kickstart -k gui/$(id -u)/io.ccbrain.daemon`.
+- `mcp` is pinned `<2`: the 2.x SDK removed the `Server.list_tools()` decorator API. Found by the clean-HOME install test.
 - Data: `~/.cc-brain/brain.db` (facts, episodes), `~/.cc-brain/summaries/`, `~/.cc-brain/logs/{daemon.log,llm.jsonl}`.
 - Config: `~/.cc-brain/config.json` → `llm.chain`, `embed`, `consolidation_min_interval_s`.
 - Manual passes: `cc-brain sleep [--dry-run]`, `cc-brain render`.

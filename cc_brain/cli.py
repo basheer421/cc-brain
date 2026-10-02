@@ -10,6 +10,7 @@ from .search import WikiSearch
 
 
 @click.group()
+@click.version_option(package_name="cc-brain", prog_name="cc-brain")
 @click.option("--config", "-c", default=None, help="Config file path")
 @click.pass_context
 def main(ctx, config):
@@ -380,3 +381,30 @@ def mcp(ctx):
     """Run the MCP stdio server."""
     from .mcp_server import run_mcp
     run_mcp(ctx.obj["config"])
+
+
+@main.command()
+@click.option("--yes", "-y", is_flag=True, help="No prompts: accept every default")
+@click.option("--no-service", is_flag=True, help="Don't install the background service")
+@click.option("--no-mcp", is_flag=True, help="Don't register the MCP server with agents")
+@click.option("--no-pi-extension", is_flag=True, help="Don't link the Pi auto-recall extension")
+def init(yes, no_service, no_mcp, no_pi_extension):
+    """Set up this machine: config, providers, embeddings, service, MCP, Pi extension. Safe to re-run."""
+    from .installer import run_init
+    run_init(yes, service=not no_service, mcp=not no_mcp, pi_extension=not no_pi_extension)
+
+
+@main.command()
+def doctor():
+    """Check the install: providers, embeddings, daemon, MCP registrations, Pi extension."""
+    from .installer import run_doctor
+    sys.exit(run_doctor())
+
+
+@main.command()
+@click.option("--purge", is_flag=True, help="Also delete ~/.cc-brain (all memory)")
+@click.option("--yes", "-y", is_flag=True)
+def uninstall(purge, yes):
+    """Remove the service, MCP registrations and Pi extension. Keeps memory unless --purge."""
+    from .installer import run_uninstall
+    run_uninstall(purge, yes)

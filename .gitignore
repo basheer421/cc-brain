@@ -8,3 +8,5 @@ CC-Brain.app.zip
 .wrangler/
 tests/local/
 docs/local/
+.venv/
+website/node_modules/

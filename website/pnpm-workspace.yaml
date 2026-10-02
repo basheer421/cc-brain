@@ -1,0 +1,4 @@
+overrides:
+  # one copy, or @react-three/postprocessing and Dither.tsx see two different Effect classes
+  postprocessing: 6.39.4
+  three: 0.185.1

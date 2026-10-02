@@ -1,14 +1,21 @@
 [project]
 name = "cc-brain"
-version = "2.0.0"
-description = "Knowledge consolidator and MCP server for AI coding agents"
+version = "3.0.0"
+description = "Long-term memory for AI coding agents: atomic facts + episodes, served over MCP"
+readme = "README.md"
+license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
     "watchdog>=4.0.0",
     "requests>=2.31.0",
     "click>=8.0.0",
-    "mcp>=1.0.0",
+    "mcp>=1.0.0,<2",          # 2.x removed the Server decorator API used by mcp_server.py
+    "numpy>=1.26",
 ]
+
+[project.urls]
+Homepage = "https://cc-brain.bachir.me"
+Repository = "https://github.com/basheer421/cc-brain"
 
 [project.scripts]
 cc-brain = "cc_brain.cli:main"
@@ -16,6 +23,9 @@ cc-brain = "cc_brain.cli:main"
 [tool.setuptools.packages.find]
 include = ["cc_brain*"]
 
+[tool.setuptools.package-data]
+cc_brain = ["integrations/pi/*.ts"]
+
 [build-system]
-requires = ["setuptools>=68.0"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"

@@ -1,23 +1,18 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+# Remove cc-brain: service, MCP registrations, Pi extension, then the program.
+# Your memory in ~/.cc-brain is kept unless you pass --purge.
+set -euo pipefail
 
-echo "Uninstalling CC Brain..."
-
-# Stop if running
-pkill -f "CC Brain.app" 2>/dev/null || true
-
-# Remove app
-rm -rf "/Applications/CC Brain.app"
-echo "  Removed /Applications/CC Brain.app"
-
-# Remove launchd plist if present
-PLIST="$HOME/Library/LaunchAgents/io.ccbrain.agent.plist"
-if [ -f "$PLIST" ]; then
-    launchctl unload "$PLIST" 2>/dev/null || true
-    rm -f "$PLIST"
-    echo "  Removed launchd plist"
+ccb="$(command -v cc-brain || echo "$HOME/.local/bin/cc-brain")"
+if [ -x "$ccb" ]; then
+  "$ccb" uninstall "$@"
 fi
 
-echo ""
-echo "Uninstalled. Your data is preserved at ~/.cc-brain/"
-echo "To remove data too: rm -rf ~/.cc-brain"
+if command -v uv >/dev/null 2>&1 && uv tool list 2>/dev/null | grep -q '^cc-brain '; then
+  uv tool uninstall cc-brain
+fi
+if [ -d "$HOME/.local/share/cc-brain" ]; then
+  rm -rf "$HOME/.local/share/cc-brain"
+  rm -f "$HOME/.local/bin/cc-brain"
+fi
+echo "cc-brain removed."
