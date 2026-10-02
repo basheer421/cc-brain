@@ -15,12 +15,10 @@ from pathlib import Path
 logger = logging.getLogger("cc-brain")
 
 STATE_PATH = Path.home() / ".cc-brain" / "state" / "consolidator.json"
+PAGE_SIZE_WARN = 10_000
 
-ORG_BANNER = (
-    "> **Acme project** — durable *infra* facts belong in "
-    "`~/code/acme/infra-docs` (promote via MR). This page holds "
-    "session-level working knowledge only.\n"
-)
+# Optional org banner for new project pages, e.g. "infra facts belong in the org docs repo":
+# config["org_banner"] = {"match": "/code/acme/", "text": "> **Acme project** — ..."}
 
 EXTRACT_SYSTEM_PROMPT = """You are a knowledge extractor for a developer's personal wiki.
 
@@ -71,6 +69,77 @@ Rules:
 - Be terse. Commands in fenced code blocks.
 - Output ONLY the full updated Markdown page (no preamble, no fencing).
 - If the suggestion adds NOTHING beyond what the page already has, output exactly: NO_CHANGE"""
+
+
+_LAST_STAMP = re.compile(r"\s*_\(last: [^)]*\)_\s*$")
+
+
+def _norm(line):
+    """Normalize a Markdown line for duplicate detection."""
+    line = _LAST_STAMP.sub("", line.strip())
+    line = re.sub(r"^[-*+]\s+", "", line)
+    return re.sub(r"\s+", " ", line).strip().lower()
+
+
+def _bullet_keys(text):
+    """Normalized bullet lines outside code fences."""
+    keys, in_fence = set(), False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if not in_fence and re.match(r"^\s*[-*+]\s+", line):
+            keys.add(_norm(line))
+    return keys
+
+
+def _drop_known_bullets(content, existing_text):
+    """Remove bullets from content already present in the page. Returns '' if nothing new."""
+    known = _bullet_keys(existing_text)
+    out, in_fence, skipping = [], False, False
+    for line in content.splitlines():
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+        if not in_fence and re.match(r"^[-*+]\s+", line):
+            skipping = _norm(line) in known
+        elif not in_fence and not line.startswith((" ", "\t")):
+            skipping = False
+        if not skipping:
+            out.append(line)
+    kept = "\n".join(out).strip("\n")
+    if not re.sub(r"```\w*|\s", "", kept):
+        return ""
+    if kept and kept.strip() in existing_text:
+        return ""
+    return kept
+
+
+def _find_heading(text, section):
+    """(start, end) of the heading line matching `section` (whole line, case/space-insensitive)."""
+    want = _norm(section)
+    for m in re.finditer(r"^#{2,3} .*$", text, re.MULTILINE):
+        if _norm(m.group(0)) == want:
+            return m.start(), m.end()
+    return None
+
+
+def _parse_json(result):
+    """Parse LLM JSON output, tolerating fences and leading/trailing prose."""
+    result = (result or "").strip()
+    try:
+        return json.loads(result)
+    except json.JSONDecodeError:
+        pass
+    start = result.find("{")
+    while start != -1:
+        try:
+            obj, _ = json.JSONDecoder().raw_decode(result[start:])
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            pass
+        start = result.find("{", start + 1)
+    return None
 
 
 def _load_state():
@@ -133,10 +202,19 @@ def _apply_extraction(wiki_dir, extraction):
 
     text = page_path.read_text()
 
+    if action in ("append", "create_section") or not section:
+        content = _drop_known_bullets(content, text)
+        if not content:
+            logger.info("Skipped duplicate extraction for %s", target)
+            return False
+
+    pos = _find_heading(text, section) if section else None
+    if pos is not None:
+        section = text[pos[0]:pos[1]]  # use the page's own heading spelling
+
     if action == "append" and section:
-        if section in text:
-            idx = text.index(section) + len(section)
-            next_section = text.find("\n## ", idx)
+        if pos is not None:
+            next_section = text.find("\n## ", pos[1])
             if next_section == -1:
                 text = text.rstrip("\n") + "\n" + content + "\n"
             else:
@@ -145,9 +223,9 @@ def _apply_extraction(wiki_dir, extraction):
             text = text.rstrip("\n") + "\n\n" + section + "\n" + content + "\n"
 
     elif action == "replace_section" and section:
-        if section in text:
-            start = text.index(section)
-            next_section = text.find("\n## ", start + len(section))
+        if pos is not None:
+            start = pos[0]
+            next_section = text.find("\n## ", pos[1])
             if next_section == -1:
                 text = text[:start] + section + "\n" + content + "\n"
             else:
@@ -156,13 +234,21 @@ def _apply_extraction(wiki_dir, extraction):
             text = text.rstrip("\n") + "\n\n" + section + "\n" + content + "\n"
 
     elif action == "create_section" and section:
-        if section not in text:
+        if pos is None:
             text = text.rstrip("\n") + "\n\n" + section + "\n" + content + "\n"
+        else:
+            next_section = text.find("\n## ", pos[1])
+            if next_section == -1:
+                text = text.rstrip("\n") + "\n" + content + "\n"
+            else:
+                text = text[:next_section].rstrip("\n") + "\n" + content + "\n" + text[next_section:]
 
     else:
         text = text.rstrip("\n") + "\n" + content + "\n"
 
     page_path.write_text(text)
+    if len(text) > PAGE_SIZE_WARN:
+        logger.warning("%s is %d bytes — run `cc-brain compact`", target, len(text))
     return True
 
 
@@ -223,7 +309,8 @@ def consolidate(config, session_info, summary_path, call_api):
 
     # Gather existing page contents for dedup context
     project_slug = re.sub(r"[^a-z0-9]+", "-", project.lower()).strip("-") or "unknown"
-    is_org = "/code/acme/" in cwd
+    banner = config.get("org_banner") or {}
+    org_banner = banner.get("text", "").strip() + "\n" if banner.get("match") and banner["match"] in cwd else ""
     project_page = wiki_dir / "projects" / f"{project_slug}.md"
     existing_project = project_page.read_text() if project_page.exists() else "(no page yet)"
 
@@ -249,33 +336,19 @@ def consolidate(config, session_info, summary_path, call_api):
         {"role": "system", "content": EXTRACT_SYSTEM_PROMPT},
         {"role": "user", "content": (
             f"Project: {project}\nPath: {cwd}\n"
-            f"Acme project: {'yes' if is_org else 'no'}\n\n"
+            f"Org project: {'yes' if org_banner else 'no'}\n\n"
             f"Existing wiki pages:\n{context_block}\n\n"
             f"Session summary:\n{summary_text}"
         )},
     ]
 
-    result = call_api(config, messages, task="consolidation")
+    result = call_api(config, messages, task="consolidation", json_mode=True)
     if result is None:
         return
 
-    result = result.strip()
-    if not result:
-        return
-
-    # Strip markdown code fences if present
-    if result.startswith("```"):
-        lines = result.split("\n")
-        if lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        result = "\n".join(lines)
-
-    try:
-        data = json.loads(result)
-    except json.JSONDecodeError:
-        logger.warning("Consolidator returned non-JSON: %.100s", result)
+    data = _parse_json(result)
+    if data is None:
+        logger.warning("Consolidator returned non-JSON (%d chars): %.200s", len(result), result)
         return
 
     extractions = data.get("extractions", [])
@@ -289,13 +362,13 @@ def consolidate(config, session_info, summary_path, call_api):
         if not target:
             continue
 
-        # Add Acme banner for new project pages
-        if is_org and target.startswith("projects/") and ext.get("action") == "create_file":
+        # Add the org banner for new project pages
+        if org_banner and target.startswith("projects/") and ext.get("action") == "create_file":
             content = ext.get("content", "")
-            if ORG_BANNER.strip() not in content:
+            if org_banner.strip() not in content:
                 lines = content.split("\n")
                 insert_at = 1 if lines and lines[0].startswith("#") else 0
-                lines.insert(insert_at, "\n" + ORG_BANNER)
+                lines.insert(insert_at, "\n" + org_banner)
                 ext["content"] = "\n".join(lines)
 
         if _apply_extraction(wiki_dir, ext):
@@ -339,11 +412,13 @@ def process_suggestion(config, suggestion, call_api):
                 "Determine the correct target file and return a single extraction."
             )},
         ]
-        result = call_api(config, messages, task="consolidation")
+        result = call_api(config, messages, task="consolidation", json_mode=True)
         if result is None:
             return False
         try:
-            data = json.loads(result.strip().strip("`").lstrip("json\n"))
+            data = _parse_json(result)
+            if data is None:
+                raise json.JSONDecodeError("no JSON object", result, 0)
             extractions = data.get("extractions", [])
             if extractions:
                 ext = extractions[0]
@@ -367,6 +442,9 @@ def process_suggestion(config, suggestion, call_api):
         # Append-only: an LLM rewrite of a large page truncates it.
         today = datetime.now().strftime("%Y-%m-%d")
         entry = "- " + content.strip().replace("\n", "\n  ") + f" _(last: {today})_\n"
+        if _norm(entry.splitlines()[0]) in _bullet_keys(existing):
+            logger.info("Suggestion for %s already present, skipping", target)
+            return True
         page_path.write_text(existing.rstrip("\n") + "\n" + entry)
     else:
         messages = [

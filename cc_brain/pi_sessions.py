@@ -14,8 +14,8 @@ QUIET_SECONDS = 120
 MAX_STALE_SECONDS = 900
 
 SUMMARY_PROMPT = """You are a session summarizer for a developer's coding-agent sessions.
-Given the previous summary (if any) and new conversation turns, produce an updated Markdown summary.
-Rewrite it completely each time to reflect the full session state.
+Given the previous summary (if any) and new conversation turns, produce an updated Markdown summary
+of the full session state. The summary must stay BOUNDED no matter how long the session runs.
 
 Use this exact structure:
 
@@ -29,17 +29,25 @@ Use this exact structure:
 What the user is trying to accomplish (1-2 sentences)
 
 ## Progress
-- Completed steps (most recent last)
+- At most 10 bullets, one line each (max ~30 words), most recent last.
+- When there would be more than 10, fold the oldest into ONE first bullet starting "Earlier:".
 
 ## Key Decisions
-- Important choices made and their rationale
+- At most 6 bullets: choice + why, one line each.
 
 ## Current State
 What's happening now / what's next (1-2 sentences)
 
 ## Files Changed
-- Files created or modified
+- At most 12 paths; group the rest as "+N more under <dir>/".
+
+Hard limit: the whole summary under 600 words. Prefer names, IDs, numbers over narrative.
 """
+
+SHORTER_HINT = (
+    "\n\nYour previous attempt exceeded the output limit. Compress harder: "
+    "Progress at most 6 bullets, whole summary under 350 words."
+)
 
 
 def is_session_file(path):
@@ -177,18 +185,29 @@ class PiSessionTracker:
             f"- Session ID: {header.get('id', '?')}\n- Started: {header.get('timestamp', '?')[:16]}\n"
             f"- Now: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\nNew conversation turns:\n{delta}"
         )
-        result = self._call_api(
-            self._config,
-            [{"role": "system", "content": SUMMARY_PROMPT}, {"role": "user", "content": user}],
-            task="summarization",
-        )
+        result = self._summarize_call(user)
         if not result:
-            return  # offset not advanced → retried on next change
+            return  # offset not advanced → retried on next change; old summary untouched
 
         summary_path.write_text(result.strip() + "\n")
         self._save(path, new_offset)
         logger.info("Updated Pi summary: %s", summary_path.name)
         self._consolidate(self._config, {"cwd": cwd}, summary_path, self._call_api)
+
+    def _summarize_call(self, user):
+        """One call, plus one shorter retry if the output was truncated. Never returns partial text."""
+        for hint in ("", SHORTER_HINT):
+            meta = {}
+            result = self._call_api(
+                self._config,
+                [{"role": "system", "content": SUMMARY_PROMPT + hint}, {"role": "user", "content": user}],
+                task="summarization",
+                meta=meta,
+            )
+            if result or not meta.get("truncated"):
+                return result
+            logger.warning("Summary truncated, retrying shorter")
+        return None
 
     def _save(self, path, offset):
         self._offsets[path] = offset

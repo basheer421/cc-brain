@@ -11,46 +11,62 @@ from pathlib import Path
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
+from .brain import Brain
 from .config import load_config, get_llm_config
-from .consolidator import consolidate, process_suggestion
+from .consolidator import _load_state, _save_state
+from .memory_ops import consolidate as memory_ops, sleep
+from .mcp_server import _kind_from_target, _project_from_target
 from .pi_sessions import PI_SESSIONS_DIR, PiSessionTracker, is_session_file
 from .queue import list_pending, remove
-from .search import WikiSearch
+from .render import render
 
 logger = logging.getLogger("cc-brain")
 
 HERMES_SESSION_DIR = Path.home() / ".hermes" / "sessions"
+MAINTENANCE_HOUR = 3        # local time; sleep + render run once per day after this hour
+_BRAIN = None
 
 
-def _call_api(config, messages, task="default"):
-    """Call LLM via OpenRouter-compatible API."""
-    import requests
+def _brain(config):
+    global _BRAIN
+    if _BRAIN is None:
+        _BRAIN = Brain(config["brain_db"], config)
+    return _BRAIN
 
-    llm = get_llm_config(config, task)
-    url = llm.get("api_base_url", "").rstrip("/")
-    if not url:
-        logger.warning("No api_base_url configured for task=%s", task)
-        return None
 
-    headers = {"Content-Type": "application/json"}
-    if key := llm.get("api_key"):
-        headers["Authorization"] = f"Bearer {key}"
-    headers.update(llm.get("extra_headers", {}))
-
-    body = {
-        "model": llm.get("model", "qwen3.8-27b"),
-        "messages": messages,
-        "max_tokens": llm.get("max_tokens", 4000),
-    }
-    body.update(llm.get("extra_body", {}))
-
+def on_summary(config, session_info, summary_path, call_api):
+    """v3 write path for one (new or updated) session summary: episode index + memory ops."""
+    brain = _brain(config)
     try:
-        resp = requests.post(f"{url}/chat/completions", json=body, headers=headers, timeout=120)
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
-    except Exception as e:
-        logger.error("LLM call failed (task=%s): %s", task, e)
-        return None
+        n = brain.ingest_summary(summary_path, embed=True)
+        if n:
+            logger.info("episodes: %d chunks from %s", n, Path(summary_path).name)
+    except Exception:
+        logger.exception("episode ingest failed for %s", summary_path)
+    return memory_ops(config, session_info, summary_path, call_api, brain=brain)
+
+
+def _maintenance(config):
+    """Daily: merge near-duplicate facts, shorten long ones, re-render the wiki view."""
+    state = _load_state()
+    today = time.strftime("%Y-%m-%d")
+    if state.get("v3:maintenance") == today or time.localtime().tm_hour < MAINTENANCE_HOUR:
+        return
+    state["v3:maintenance"] = today
+    _save_state(state)
+    brain = _brain(config)
+    try:
+        logger.info("sleep: %s", sleep(config, _call_api, brain=brain, max_calls=60))
+        brain.index_docs(config.get("wiki_dir", str(Path.home() / "llm-wiki")))
+        render(config, brain=brain)
+    except Exception:
+        logger.exception("daily maintenance failed")
+
+
+def _call_api(config, messages, task="default", json_mode=False, meta=None):
+    """Provider chain (agy -> Meridian -> OpenRouter); see llm.py. Never returns truncated text."""
+    from .llm import call_api
+    return call_api(config, messages, task=task, json_mode=json_mode, meta=meta)
 
 
 def _find_summary(session_dir):
@@ -75,9 +91,8 @@ def _read_session_info(session_dir):
 
 
 class SessionHandler(FileSystemEventHandler):
-    def __init__(self, config, search, pi_tracker):
+    def __init__(self, config, pi_tracker):
         self._config = config
-        self._search = search
         self._pi = pi_tracker
         self._processed = set()
         self._debounce = {}
@@ -112,30 +127,36 @@ class SessionHandler(FileSystemEventHandler):
         session_info = _read_session_info(session_dir)
 
         try:
-            result = consolidate(self._config, session_info, p, _call_api)
+            result = on_summary(self._config, session_info, p, _call_api)
             if result:
-                logger.info("Consolidated %d pages from %s", len(result), key)
+                logger.info("memory ops: %d from %s", len(result), key)
         except Exception:
             logger.exception("Consolidation failed for %s", key)
 
 
-def _process_queue(config, search):
-    """Process any pending suggestions."""
-    pending = list_pending(config["queue_dir"])
-    for item in pending:
+def _process_queue(config):
+    """Legacy queued suggestions (v2 wiki_suggest) become facts directly — no LLM."""
+    brain = _brain(config)
+    for item in list_pending(config["queue_dir"]):
         filepath = item.pop("_file", None)
         if not filepath:
             continue
         try:
-            ok = process_suggestion(config, item, _call_api)
-            if ok:
-                remove(filepath)
-                # Update search index for changed pages
-                target = item.get("target", "")
-                if target and target != "auto":
-                    search.update_page(target)
+            target, kind = item.get("target", ""), _kind_from_target(item.get("target"))
+            if item.get("type") == "correction":
+                kind = "correction"
+            brain.add_fact(item.get("content", ""), kind=kind, project=_project_from_target(target),
+                           importance=3 if kind == "correction" else 2, source=f"queue:{item.get('id', '')}")
+            remove(filepath)
         except Exception:
             logger.exception("Failed to process suggestion %s", item.get("id", "?"))
+
+
+def _error_file_handler(path):
+    """errors.log gets WARNING+ only; full INFO stream goes to stdout (daemon.log)."""
+    handler = logging.FileHandler(path)
+    handler.setLevel(logging.WARNING)
+    return handler
 
 
 def run_daemon(config_path=None):
@@ -147,7 +168,7 @@ def run_daemon(config_path=None):
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler(config["error_log"]),
+            _error_file_handler(config["error_log"]),
         ],
     )
 
@@ -171,16 +192,16 @@ def run_daemon(config_path=None):
     signal.signal(signal.SIGTERM, cleanup)
     signal.signal(signal.SIGINT, cleanup)
 
-    # Build search index
+    # Index hand-written skill docs; backfill any missing embeddings (no-op when Ollama is down)
+    brain = _brain(config)
     wiki_dir = config.get("wiki_dir", str(Path.home() / "llm-wiki"))
-    search = WikiSearch(config["search_db"], wiki_dir)
-    count = search.rebuild()
-    logger.info("Search index: %d pages", count)
+    logger.info("docs: %d chunks; embedded facts=%d episodes=%d", brain.index_docs(wiki_dir),
+                brain.embed_missing("facts"), brain.embed_missing("episodes"))
 
     # Set up watchers
     observer = Observer()
-    pi_tracker = PiSessionTracker(config, _call_api, consolidate)
-    handler = SessionHandler(config, search, pi_tracker)
+    pi_tracker = PiSessionTracker(config, _call_api, on_summary)
+    handler = SessionHandler(config, pi_tracker)
 
     if PI_SESSIONS_DIR.exists():
         cutoff = time.time() - 3600
@@ -199,12 +220,13 @@ def run_daemon(config_path=None):
     try:
         while True:
             pi_tracker.process()
-            _process_queue(config, search)
+            _process_queue(config)
+            _maintenance(config)
             time.sleep(30)
     except KeyboardInterrupt:
         pass
     finally:
         observer.stop()
         observer.join()
-        search.close()
+        brain.close()
         cleanup()

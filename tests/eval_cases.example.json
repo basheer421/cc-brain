@@ -1,0 +1,27 @@
+[
+ [
+  "run the api tests locally without a database",
+  "my-api",
+  "make check"
+ ],
+ [
+  "glab jq flag",
+  null,
+  "--jq"
+ ],
+ [
+  "staging host ssh address",
+  null,
+  "\\d+\\.\\d+\\.\\d+\\.\\d+"
+ ],
+ [
+  "express rate limiter counts everyone as one visitor",
+  null,
+  "trust proxy"
+ ],
+ [
+  "database runs out of connections under load",
+  null,
+  "[Cc]onnection budget|max_?conn"
+ ]
+]

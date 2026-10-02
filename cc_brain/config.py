@@ -21,6 +21,8 @@ DEFAULTS = {
     "queue_dir": str(Path.home() / ".cc-brain" / "queue"),
     "state_dir": str(Path.home() / ".cc-brain" / "state"),
     "search_db": str(Path.home() / ".cc-brain" / "search.db"),
+    "brain_db": str(Path.home() / ".cc-brain" / "brain.db"),
+    "embedding": {"enabled": True, "url": "http://localhost:11434", "model": "nomic-embed-text"},
     "pid_file": str(Path.home() / ".cc-brain" / "cc-brain.pid"),
     "consolidation_min_interval_s": 900,
     "skills_min_interval_s": 1800,
@@ -61,7 +63,7 @@ def load_config(path=None):
     if key := os.environ.get("OPENROUTER_API_KEY"):
         config.setdefault("openrouter_api_key", key)
 
-    for d in ("summary_dir", "error_log", "wiki_dir", "queue_dir", "state_dir", "search_db", "pid_file"):
+    for d in ("summary_dir", "error_log", "wiki_dir", "queue_dir", "state_dir", "search_db", "brain_db", "pid_file"):
         config[d] = str(Path(config[d]).expanduser())
 
     Path(config["summary_dir"]).mkdir(parents=True, exist_ok=True)
