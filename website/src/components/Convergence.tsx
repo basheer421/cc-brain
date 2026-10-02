@@ -25,15 +25,22 @@ function useInView(ref: React.RefObject<HTMLDivElement | null>, threshold = 0.3)
 }
 
 const agents = [
-  { name: 'Claude Code', source: '~/.claude/**/*.jsonl', method: 'fsevents', color: '#d97757' },
-  { name: 'Hermes', source: '~/.hermes/state.db', method: 'shell hook', color: '#7d8fa8' },
-  { name: 'Pi', source: '~/.pi/agent/**/*.jsonl', method: 'fsevents', color: '#58a6ff' },
+  { name: 'Pi', source: '~/.pi/agent/sessions/', method: 'fsevents', color: '#58a6ff' },
+  { name: 'Hermes', source: '~/.hermes/sessions/', method: 'fsevents', color: '#7d8fa8' },
 ]
 
 const outputs = [
-  { name: 'my-app-17...md', color: '#d97757' },
-  { name: 'h-my-app-...md', color: '#7d8fa8' },
-  { name: 'p-my-app-...md', color: '#58a6ff' },
+  { name: 'recall', color: '#e6ecef' },
+  { name: 'timeline', color: '#e6ecef' },
+  { name: 'remember', color: '#e6ecef' },
+  { name: 'correct', color: '#e6ecef' },
+]
+
+const clients = [
+  { name: 'Claude Code', color: '#d97757' },
+  { name: 'Pi', color: '#58a6ff' },
+  { name: 'Hermes', color: '#7d8fa8' },
+  { name: 'any MCP client', color: '#57606a' },
 ]
 
 export default function Convergence() {
@@ -99,16 +106,16 @@ export default function Convergence() {
           <span
             className={`${MONO} text-[0.65rem] tracking-[0.2em] uppercase text-[#7d8fa8] font-medium`}
           >
-            Multi-agent support
+            Learn once, recall anywhere
           </span>
           <div className="w-8 h-px bg-[#7d8fa8] opacity-30 mt-4 mb-5 mx-auto" />
           <h2 className={`${MONO} text-xl md:text-2xl font-bold text-white mb-3 leading-tight`}>
-            Three agents. One memory.
+            Many agents. One memory.
           </h2>
           <p className={`${MONO} text-sm text-[#7d8590] leading-relaxed max-w-xl mx-auto`}>
-            Claude Code writes JSONL. Hermes writes SQLite. Pi writes JSONL in
-            its own format. CC Brain listens to all three and folds every session
-            into the same living memory.
+            CC Brain learns from Pi and Hermes sessions as they happen, folds
+            them into one store of facts and episodes, and serves it over MCP.
+            What one agent learned, every agent can recall.
           </p>
         </div>
 
@@ -145,7 +152,7 @@ export default function Convergence() {
           </svg>
 
           {/* Agent sources */}
-          <div className="grid grid-cols-3 gap-3 mb-16">
+          <div className="grid grid-cols-2 gap-3 mb-16 max-w-md mx-auto">
             {agents.map((a, i) => (
               <div
                 key={a.name}
@@ -166,7 +173,7 @@ export default function Convergence() {
               className="border border-[#7d8fa8]/40 rounded-lg px-12 py-4 text-center bg-gradient-to-b from-[#7d8fa8]/10 to-transparent"
             >
               <div className={`${MONO} text-sm font-bold text-white`}>CC Brain</div>
-              <div className={`${MONO} text-[10px] text-[#7d8fa8]`}>menu bar app</div>
+              <div className={`${MONO} text-[10px] text-[#7d8fa8]`}>background daemon</div>
             </div>
           </div>
 
@@ -175,11 +182,21 @@ export default function Convergence() {
             ref={summariesRef}
             className="border border-[#1e1e1e] rounded-lg p-5 text-center"
           >
-            <div className={`${MONO} text-xs font-bold text-[#e6ecef] mb-2`}>~/.cc-brain/summaries/</div>
-            <div className="flex justify-center gap-4">
+            <div className={`${MONO} text-xs font-bold text-[#e6ecef] mb-1`}>facts · episodes</div>
+            <div className={`${MONO} text-[10px] text-[#57606a] mb-3`}>SQLite · keyword + local vector search</div>
+            <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 mb-3">
               {outputs.map((o) => (
                 <span key={o.name} className={`${MONO} text-[11px]`} style={{ color: o.color }}>
-                  {o.name}
+                  {o.name}()
+                </span>
+              ))}
+            </div>
+            <div className={`${MONO} text-[10px] text-[#7d8590]`}>
+              over MCP to{' '}
+              {clients.map((c, i) => (
+                <span key={c.name}>
+                  <span style={{ color: c.color }}>{c.name}</span>
+                  {i < clients.length - 1 ? ' · ' : ''}
                 </span>
               ))}
             </div>
@@ -197,10 +214,10 @@ export default function Convergence() {
         </div>
 
         <p className={`${MONO} text-center text-xs text-[#57606a] leading-relaxed max-w-lg mx-auto mt-8`}>
-          Event-driven on all sides. No polling. Each agent's summaries carry a
-          unique prefix (<span className="text-[#7d8fa8]">h-</span> for Hermes,{' '}
-          <span className="text-[#58a6ff]">p-</span> for Pi), so every agent's
-          sessions live side by side.
+          Event-driven, no polling. Every answer is about 2 KB of ranked facts,
+          not a page to read. Truncated model output is never saved, and a
+          wrong fact is retired with <span className="text-[#7d8fa8]">correct()</span>,
+          with its history kept.
         </p>
       </div>
     </section>

@@ -14,16 +14,16 @@ interface Feature {
 const features: Feature[] = [
   {
     label: 'Always watching',
-    heading: 'Lives in your menu bar.',
+    heading: 'A daemon, not a plugin.',
     description:
-      'A native macOS app that watches your agent sessions. No browser extensions, no plugins, no configuration beyond an API key.',
+      'One command installs it. A background service distils your sessions into facts and episodes, so the heavy work never runs inside your agent or on its tokens. One more command, cc-brain doctor, tells you it is healthy.',
     illustration: chilling,
   },
   {
     label: 'Not a log dump',
-    heading: 'Summaries that rewrite themselves.',
+    heading: 'Facts that stay true.',
     description:
-      'Every conversation turn triggers an incremental rewrite. Goal, progress, key decisions, current state. A living document, not a static export.',
+      'Each new fact is checked against what is already known: add, update, supersede, or skip. Wrong ones get corrected, with history kept. A nightly sleep pass merges duplicates and shortens rambles without dropping a flag, path or port number.',
     illustration: absurdCh1,
     isAbsurd: true,
   },
@@ -31,14 +31,14 @@ const features: Feature[] = [
     label: 'The whole point',
     heading: 'New chat, full context.',
     description:
-      'Summaries write to ~/.claude/CLAUDE.md. Your next Claude Code session reads them automatically. No copy-pasting, no "here\'s what I was working on."',
+      'Your agent calls recall and timeline over MCP. In Pi, auto-recall adds the relevant facts before the model even starts. "What did I do yesterday?" finally has an answer. No copy-pasting, no "here\'s what I was working on."',
     illustration: jumping,
   },
   {
     label: 'Your model, your cost',
-    heading: 'Any OpenAI-compatible endpoint.',
+    heading: 'Bring the model you already pay for.',
     description:
-      'Any OpenAI-compatible endpoint. Point it at OpenRouter, DeepSeek, or your own vLLM box. Swap models with one config change.',
+      'An ordered provider chain with fallbacks: the Antigravity CLI, or any OpenAI-compatible endpoint (OpenRouter, vLLM, a local proxy). Out of credit or rate-limited, it moves to the next one. Search embeddings run locally on Ollama.',
     illustration: unboxing,
   },
 ]

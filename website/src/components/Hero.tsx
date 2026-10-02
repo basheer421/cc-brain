@@ -14,8 +14,9 @@ function SublineWithTypewriter({ onReady }: { onReady: () => void }) {
 
   return (
     <div className="text-base md:text-lg font-mono text-white/70 max-w-xl mb-10 animate-fade-in">
-      It watches your <AgentTypewriter /> sessions and writes living
-      summaries. Next chat picks up where you left off.
+      Long-term memory for <AgentTypewriter />. It learns from every
+      session and hands back the 2 KB that matter. Next chat picks up where
+      you left off.
     </div>
   )
 }
