@@ -10,3 +10,4 @@ tests/local/
 docs/local/
 .venv/
 website/node_modules/
+website/public/install.sh

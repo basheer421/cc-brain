@@ -44,6 +44,9 @@ cd website && pnpm install && pnpm build
 pnpm dlx wrangler pages deploy dist --project-name cc-brain
 ```
 
+`curl cc-brain.bachir.me | bash` serves the `install.sh` copied into the build (`functions/_middleware.ts`), not
+GitHub, so **redeploy the site after changing `install.sh`**.
+
 ## Runtime paths
 
 - DB: `~/.cc-brain/brain.db` · Config: `~/.cc-brain/config.json` · Summaries: `~/.cc-brain/summaries/`
