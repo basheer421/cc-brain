@@ -82,7 +82,7 @@ Then it runs `cc-brain init`, which sets up the machine. `init` is safe to re-ru
 
 1. `~/.cc-brain/config.json` with the LLM providers it finds (agy, a local Meridian proxy, an OpenRouter key)
 2. local embeddings: pulls `nomic-embed-text` if Ollama is running (optional; without it recall is keyword-only)
-3. MCP registration for Pi (`~/.pi/agent/mcp.json`) and Claude Code (`~/.claude.json`), with a backup of each file
+3. MCP registration for Pi (`~/.pi/agent/mcp-adapter.json` for pi-mcp-adapter, or `mcp.json` on Pi 0.99+) and Claude Code (`~/.claude.json`), with a backup of each file
 4. the **Pi auto-recall extension**, symlinked into `~/.pi/agent/extensions/`, so it updates with cc-brain
 5. a background service: launchd agent `io.ccbrain.daemon` on macOS, systemd user unit on Linux
 6. `cc-brain doctor`, which checks all of the above

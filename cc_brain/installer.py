@@ -392,12 +392,33 @@ def service_running():
 
 # ── agent integrations ───────────────────────────────────────────────────────
 
+def _pi_version():
+    pi = _find("pi")
+    if not pi:
+        return None
+    try:
+        out = subprocess.run([pi, "--version"], capture_output=True, text=True, timeout=10).stdout
+        return tuple(int(x) for x in out.strip().split(".")[:2])
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def pi_mcp_config():
+    """Pi 0.99+ reads ~/.pi/agent/mcp.json natively; older Pi only gets MCP through pi-mcp-adapter, which
+    (v5+) reads ~/.pi/agent/mcp-adapter.json and ignores mcp.json with a migration warning."""
+    adapter = PI_DIR / "mcp-adapter.json"
+    if adapter.exists():
+        return adapter
+    version = _pi_version()
+    return PI_DIR / "mcp.json" if version is None or version >= (0, 99) else adapter
+
+
 def mcp_targets():
     """(client name, config path, entry extras) for every agent found on this machine."""
     targets = []
     if PI_DIR.exists():
         # directTools: pi-mcp-adapter exposes recall/timeline as first-class tools instead of via a proxy
-        targets.append(("Pi", PI_DIR / "mcp.json", {"directTools": True}))
+        targets.append(("Pi", pi_mcp_config(), {"directTools": True}))
     if (HOME / ".claude.json").exists() or shutil.which("claude"):
         targets.append(("Claude Code", HOME / ".claude.json", {}))
     if (HOME / ".config" / "mcp" / "mcp.json").exists():
