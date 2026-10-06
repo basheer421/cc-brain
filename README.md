@@ -1,5 +1,7 @@
 # CC Brain
 
+[![version](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fbasheer421%2Fcc-brain%2Fmain%2Fpyproject.toml&query=%24.project.version&label=version&color=00c853&style=flat-square)](pyproject.toml) [![license](https://img.shields.io/github/license/basheer421/cc-brain?style=flat-square&color=blue)](LICENSE) [![python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org) [![MCP](https://img.shields.io/badge/MCP-server-8A2BE2?style=flat-square)](https://modelcontextprotocol.io) [![website](https://img.shields.io/badge/website-cc--brain.bachir.me-000000?style=flat-square)](https://cc-brain.bachir.me)
+
 Long-term memory for AI coding agents. A background daemon watches your agent sessions, distils them into
 **atomic facts** and **time-indexed episodes**, and serves them back to any agent over **MCP**. Answers come
 back as ~2 KB of ranked facts, so agents can afford to check memory before every task.
