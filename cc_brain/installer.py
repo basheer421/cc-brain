@@ -291,6 +291,7 @@ def _bootstrap(plist):
     import time
     label = plist.stem
     _launchctl("bootout", f"{_gui()}/{label}")
+    r = None
     for attempt in range(2):
         for _ in range(20):
             if not _launchd_loaded(label):
@@ -300,6 +301,7 @@ def _bootstrap(plist):
         if r.returncode == 0:
             return r
         time.sleep(1)
+    assert r is not None  # range(2) always runs
     return r
 
 
@@ -459,7 +461,7 @@ def remove_mcp():
     for name, path, _ in mcp_targets():
         data = _read_json(path) if path.exists() else None
         entry = (data or {}).get("mcpServers", {}).get("cc-brain")
-        if entry and "cc-brain" in str(entry.get("command", "")):
+        if data and entry and "cc-brain" in str(entry.get("command", "")):
             _backup(path)
             del data["mcpServers"]["cc-brain"]
             _write_json(path, data)

@@ -540,6 +540,8 @@ class Brain:
 class _Filters(tuple):
     """(sql, args) for BM25 plus a python predicate for dense hits."""
 
+    meta: dict
+
     def __new__(cls, sql, args, meta):
         obj = super().__new__(cls, (sql, args))
         obj.meta = meta

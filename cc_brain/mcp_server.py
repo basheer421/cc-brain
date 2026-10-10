@@ -181,7 +181,7 @@ def run_mcp(config=None):
             limit = int(a.get("limit", 5))
             out = {}
             if scope in (None, "", "all", "projects", "failures", "identity"):
-                kind = {"failures": "pitfall", "identity": "preference"}.get(scope)
+                kind = {"failures": "pitfall", "identity": "preference"}.get(scope or "")
                 out["facts"] = brain.recall(a["query"], kind=kind, limit=limit + 3)
             if scope in (None, "", "all", "skills"):
                 out["docs"] = brain.search_docs(a["query"], limit=2 if scope != "skills" else limit)

@@ -105,7 +105,7 @@ def plan(wiki_dir):
 
 
 def apply(brain, facts):
-    counts = {"ADD": 0, "NOOP": 0, "SKIP": 0}
+    counts: dict[str, float] = {"ADD": 0, "NOOP": 0, "SKIP": 0}
     t0 = time.time()
     for f in facts:
         _, op = brain.add_fact(f["text"], kind=f["kind"], project=f["project"], entities=f["entities"],

@@ -138,7 +138,7 @@ def call_api(config, messages, task="default", json_mode=False, meta=None):
             time.sleep(wait)
         _last_call = time.time()
         cap = min(p.get("timeout", MAX_CALL_S), llm_cfg.get("max_call_seconds", MAX_CALL_S))
-        attempt = {"cap": cap}
+        attempt: dict = {"cap": cap}
         t0 = time.time()
         status = "ok"
         try:

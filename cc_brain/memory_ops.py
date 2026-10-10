@@ -219,7 +219,7 @@ def _clusters(brain, threshold=0.9, project=None):
         return i
 
     ii, jj = np.where(np.triu(sims) >= threshold)
-    for i, j in zip(ii, jj):
+    for i, j in zip(ii.tolist(), jj.tolist()):  # plain ints, not np.intp
         if rows[i]["project"] == rows[j]["project"]:
             parent[find(i)] = find(j)
     groups = {}
