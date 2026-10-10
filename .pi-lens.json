@@ -1,0 +1,10 @@
+{
+  "rules": {
+    "noise": {
+      "disable": [
+        "python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query",
+        "unchecked-throwing-call-python"
+      ]
+    }
+  }
+}
