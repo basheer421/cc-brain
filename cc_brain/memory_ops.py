@@ -25,7 +25,7 @@ OPS_PROMPT = f"""You maintain a developer's long-term memory as a list of atomic
 
 Input: a coding-session summary and the EXISTING facts most related to it (with ids).
 Output JSON only: {{"ops": [ ... ]}} where each op is one of:
-  {{"op": "ADD", "text": "...", "kind": "<kind>", "importance": 1|2|3}}
+  {{"op": "ADD", "text": "...", "kind": "<kind>", "importance": 1|2|3, "project": "<slug>"}}
   {{"op": "UPDATE", "id": <existing id>, "text": "..."}}      # same fact, refined/extended
   {{"op": "SUPERSEDE", "id": <existing id>, "text": "..."}}   # the old fact is no longer true
   {{"op": "NOOP", "id": <existing id>}}                       # session re-confirmed this fact
@@ -37,6 +37,11 @@ Rules:
 - Only DURABLE knowledge that will matter in a future session: decisions + why, pitfalls + fix,
   tool quirks, user corrections and preferences, stable facts (hosts, paths, versions, who-owns-what).
 - Skip progress narration, one-off values, in-flight state, anything the summary marks as tentative.
+- Never record MR/PR/branch/pipeline/commit/ticket STATUS ("MR !85 merged", "branch X pushed", "task closed").
+  It is stale within days and git/issue trackers are the source of truth. Record only the lasting
+  lesson or decision behind it, if any.
+- project = the repo/system the fact is ABOUT, not the session's project: use a known project slug
+  or "global" for cross-project tools, preferences and people. Omit to use the session's project.
 - One claim per fact, <= 200 chars, imperative or declarative ("X needs Y because Z"). Names/IDs exact.
 - Never ADD something an existing fact already says — use NOOP or UPDATE.
 - If the session shows an existing fact is now false (status changed, decision reversed), SUPERSEDE it.
@@ -88,12 +93,12 @@ def consolidate(config, session_info, summary_path, call_api, brain=None, force=
             related_ids.add(r["id"])
     existing = "\n".join(f"#{r['id']} [{r['kind']}/{r['project']}] {r['text'][:400]}" for r in related)
 
-    user = (f"Project: {project} ({cwd})\n\nEXISTING facts:\n{existing or '(none)'}\n\n"
+    user = (f"Project: {project} ({cwd})\nKnown project slugs: {', '.join(_known_projects(brain))}\n\nEXISTING facts:\n{existing or '(none)'}\n\n"
             f"SESSION SUMMARY:\n{summary}")
     data, meta = None, {}
     for attempt in range(2):  # reasoning models can burn the token budget; retry once asking for fewer ops
         meta = {}
-        sys_prompt = OPS_PROMPT if attempt == 0 else OPS_PROMPT + "\nBe brief: at most 5 ops, think briefly."
+        sys_prompt = _ops_prompt(config) if attempt == 0 else _ops_prompt(config) + "\nBe brief: at most 5 ops, think briefly."
         result = call_api(config, [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user}],
                           task="consolidation", json_mode=True, meta=meta)
         data = _parse_json(result) if result else None
@@ -101,7 +106,10 @@ def consolidate(config, session_info, summary_path, call_api, brain=None, force=
             break
     if not data:
         logger.warning("memory ops: no usable output for %s (truncated=%s)", summary_path.name, meta.get("truncated"))
-        return []
+        state = _load_state()
+        state.pop(rate_key, None)  # failed run must not rate-limit its own retry
+        _save_state(state)
+        return None  # None = LLM failure (caller may queue a retry); [] = nothing to do
 
     applied = []
     for op in data.get("ops", [])[:12]:
@@ -115,12 +123,13 @@ def consolidate(config, session_info, summary_path, call_api, brain=None, force=
         if kind in ("UPDATE", "SUPERSEDE", "NOOP") and fid not in related_ids:
             kind = "ADD" if text else "SKIP"  # model referenced an id it wasn't shown
         if kind == "ADD" and text:
-            twin = _paraphrase_of(brain, text, project)
+            fproj = _op_project(brain, op, project)
+            twin = _paraphrase_of(brain, text, fproj)
             if twin:  # semantic near-duplicate the model failed to recognise
                 brain.touch(twin)
                 applied.append(("NOOP", twin))
                 continue
-            new_id, res = brain.add_fact(text, kind=op.get("kind", "fact"), project=project,
+            new_id, res = brain.add_fact(text, kind=op.get("kind", "fact"), project=fproj,
                                          importance=op.get("importance", 2), source=source)
             applied.append((res, new_id))
         elif kind == "UPDATE" and text:
@@ -133,6 +142,26 @@ def consolidate(config, session_info, summary_path, call_api, brain=None, force=
             applied.append(("NOOP", fid))
     logger.info("memory ops for %s: %s", summary_path.name, applied)
     return applied
+
+
+def _ops_prompt(config):
+    """OPS_PROMPT plus user-specific rules from config["memory_rules"] (list of strings, kept out of the repo)."""
+    rules = config.get("memory_rules") or []
+    return OPS_PROMPT + "".join(f"\n- {r}" for r in rules)
+
+
+def _known_projects(brain, limit=20):
+    rows = brain.conn.execute("SELECT project FROM facts WHERE superseded_by IS NULL AND project != 'global' "
+                              "GROUP BY project ORDER BY COUNT(*) DESC LIMIT ?", (limit,))
+    return [r[0] for r in rows] or ["(none yet)"]
+
+
+def _op_project(brain, op, default):
+    """Model-chosen project, only if it is 'global' or a slug already in use (no invented projects)."""
+    p = (op.get("project") or "").strip().lower()
+    if p == "global" or (p and brain.conn.execute("SELECT 1 FROM facts WHERE project = ? LIMIT 1", (p,)).fetchone()):
+        return p
+    return default
 
 
 PARAPHRASE_SIM = 0.85  # measured: paraphrases ~0.89, related-but-distinct facts <= 0.71
