@@ -27,7 +27,10 @@ logger = logging.getLogger("cc-brain")
 LOG = Path.home() / ".cc-brain" / "logs" / "llm.jsonl"
 COOLDOWN_S = 900          # skip a provider this long after a hard failure (no credit, down, auth)
 AGY_MAX_PROMPT = 400_000  # argv limit is ~1 MB on macOS; bigger prompts go to the next provider
+MAX_CALL_S = 180          # wall-clock cap per provider attempt (llm.max_call_seconds overrides)
+MIN_GAP_S = 5             # min wall-clock gap between call starts (llm.min_interval_s) — keeps replays slow
 _cooldown = {}
+_last_call = 0.0
 
 
 class HardFail(Exception):
@@ -63,7 +66,8 @@ def _openai(p, task_cfg, messages, json_mode, meta):
         body["response_format"] = {"type": "json_object"}
     body.update(p.get("extra_body", {}))
     try:
-        resp = requests.post(f"{url}/chat/completions", json=body, headers=headers, timeout=p.get("timeout", 180))
+        resp = requests.post(f"{url}/chat/completions", json=body, headers=headers,
+                             timeout=(10, min(p.get("timeout", 180), meta["cap"])))
     except requests.ConnectionError as e:
         raise HardFail(f"connection: {e.__class__.__name__}")
     if resp.status_code in (401, 402, 403, 429):
@@ -90,17 +94,30 @@ def _agy(p, task_cfg, messages, json_mode, meta):
     cmd = [p.get("bin", "agy"), "-p", prompt, "--model", p["model"], "--output-format", "text",
            "--disable-slash-commands", "--print-timeout", f"{p.get('timeout', 240)}s"]
     # empty cwd: agy is an agent; without --dangerously-skip-permissions its tool calls are soft-denied anyway
-    with tempfile.TemporaryDirectory(prefix="cc-brain-agy-") as cwd:
+    # Deadline on the wall clock (time.time), not the monotonic clock subprocess.run uses: macOS
+    # pauses the monotonic clock during sleep, which let one call run 87 min across a lid-close.
+    deadline = time.time() + meta["cap"]
+    with tempfile.TemporaryDirectory(prefix="cc-brain-agy-") as cwd, \
+            tempfile.TemporaryFile("w+") as fout, tempfile.TemporaryFile("w+") as ferr:
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=p.get("timeout", 240) + 30)
+            proc = subprocess.Popen(cmd, stdout=fout, stderr=ferr, text=True, cwd=cwd)
         except FileNotFoundError:
             raise HardFail("agy binary not found")
-    out = (r.stdout or "").strip()
-    if r.returncode != 0 or not out:
-        err = (r.stderr or out)[-300:]
+        while proc.poll() is None:
+            if time.time() > deadline:
+                proc.kill()
+                proc.wait()
+                raise TimeoutError(f"agy exceeded {meta['cap']}s wall clock")
+            time.sleep(1)
+        fout.seek(0)
+        ferr.seek(0)
+        stdout, stderr = fout.read(), ferr.read()
+    out = (stdout or "").strip()
+    if proc.returncode != 0 or not out:
+        err = (stderr or out)[-300:]
         if re.search(r"auth|login|quota|exhausted|rate.?limit|429|permission denied", err, re.I):
-            raise HardFail(f"agy rc={r.returncode}: {err}")
-        raise RuntimeError(f"agy rc={r.returncode}: {err}")
+            raise HardFail(f"agy rc={proc.returncode}: {err}")
+        raise RuntimeError(f"agy rc={proc.returncode}: {err}")
     meta["usage"] = {"prompt_chars": len(prompt), "output_chars": len(out)}
     return _strip_fence(out)
 
@@ -108,13 +125,20 @@ def _agy(p, task_cfg, messages, json_mode, meta):
 def call_api(config, messages, task="default", json_mode=False, meta=None):
     meta = {} if meta is None else meta
     task_cfg = get_llm_config(config, task)
-    chain = (config.get("llm") or {}).get("chain") or [dict(task_cfg, name="legacy", type="openai")]
+    global _last_call
+    llm_cfg = config.get("llm") or {}
+    chain = llm_cfg.get("chain") or [dict(task_cfg, name="legacy", type="openai")]
     now = time.time()
     for p in chain:
         name = p.get("name", p.get("type"))
         if _cooldown.get(name, 0) > now:
             continue
-        attempt = {}
+        wait = _last_call + llm_cfg.get("min_interval_s", MIN_GAP_S) - time.time()
+        if wait > 0:
+            time.sleep(wait)
+        _last_call = time.time()
+        cap = min(p.get("timeout", MAX_CALL_S), llm_cfg.get("max_call_seconds", MAX_CALL_S))
+        attempt = {"cap": cap}
         t0 = time.time()
         status = "ok"
         try:

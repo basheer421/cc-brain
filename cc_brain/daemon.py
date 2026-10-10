@@ -17,6 +17,7 @@ from .consolidator import _load_state, _save_state
 from .memory_ops import consolidate as memory_ops, sleep
 from .mcp_server import _kind_from_target, _project_from_target
 from .pi_sessions import PI_SESSIONS_DIR, PiSessionTracker, is_session_file
+from . import jobs
 from .queue import list_pending, remove
 from .render import render
 
@@ -24,6 +25,9 @@ logger = logging.getLogger("cc-brain")
 
 HERMES_SESSION_DIR = Path.home() / ".hermes" / "sessions"
 MAINTENANCE_HOUR = 3        # local time; sleep + render run once per day after this hour
+TICK_S = 30
+WAKE_GAP_S = 120            # a loop gap this long means the Mac slept
+WAKE_GRACE_S = 90           # after wake, let network/VPN/auth settle before any LLM call
 _BRAIN = None
 
 
@@ -34,8 +38,9 @@ def _brain(config):
     return _BRAIN
 
 
-def on_summary(config, session_info, summary_path, call_api):
-    """v3 write path for one (new or updated) session summary: episode index + memory ops."""
+def on_summary(config, session_info, summary_path, call_api, retry=False):
+    """v3 write path for one (new or updated) session summary: episode index + memory ops.
+    LLM failure queues a forced retry (memory ops return None) instead of losing the session."""
     brain = _brain(config)
     try:
         n = brain.ingest_summary(summary_path, embed=True)
@@ -43,7 +48,10 @@ def on_summary(config, session_info, summary_path, call_api):
             logger.info("episodes: %d chunks from %s", n, Path(summary_path).name)
     except Exception:
         logger.exception("episode ingest failed for %s", summary_path)
-    return memory_ops(config, session_info, summary_path, call_api, brain=brain)
+    result = memory_ops(config, session_info, summary_path, call_api, brain=brain, force=retry)
+    if result is None and not retry:
+        jobs.enqueue(config, {"type": "ops", "summary": str(summary_path), "cwd": session_info.get("cwd", "")})
+    return result
 
 
 def _maintenance(config):
@@ -217,12 +225,27 @@ def run_daemon(config_path=None):
     observer.start()
     logger.info("cc-brain daemon started (pid %d)", os.getpid())
 
+    handlers = {
+        "summarize": lambda j: Path(j["path"]).exists() and pi_tracker._summarize(j["path"], retry=True),
+        "ops": lambda j: not Path(j["summary"]).exists()
+        or on_summary(config, {"cwd": j["cwd"]}, j["summary"], _call_api, retry=True) is not None,
+    }
+    if jobs.pending(config):
+        logger.info("retry queue: %d pending from before restart", jobs.pending(config))
+    last_tick, paused_until = time.time(), 0.0
     try:
         while True:
-            pi_tracker.process()
-            _process_queue(config)
-            _maintenance(config)
-            time.sleep(30)
+            now = time.time()
+            if now - last_tick > WAKE_GAP_S:
+                logger.info("woke after %.0f min; LLM work paused %ds", (now - last_tick) / 60, WAKE_GRACE_S)
+                paused_until = now + WAKE_GRACE_S
+            last_tick = now
+            _process_queue(config)  # no LLM
+            if now >= paused_until:
+                pi_tracker.process()
+                jobs.run_one(config, handlers)  # one retry per tick: a sleep backlog drains slowly
+                _maintenance(config)
+            time.sleep(TICK_S)
     except KeyboardInterrupt:
         pass
     finally:

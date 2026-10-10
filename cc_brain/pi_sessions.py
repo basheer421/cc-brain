@@ -163,20 +163,21 @@ class PiSessionTracker:
             except Exception:
                 logger.exception("Pi summary failed for %s", path)
 
-    def _summarize(self, path):
+    def _summarize(self, path, retry=False):
+        """Returns False only when the LLM failed (then, unless retry, the session goes to the retry queue)."""
         offset = self._offsets.get(path, 0)
         if Path(path).stat().st_size <= offset:
-            return
+            return True
         delta, new_offset = _delta(path, offset)
         if not delta:
             self._save(path, new_offset)
-            return
+            return True
 
         header = _header(path)
         cwd = header.get("cwd", "")
         if not cwd or Path(cwd) == Path.home() or cwd.startswith("/private/tmp"):
             self._save(path, new_offset)
-            return
+            return True
 
         summary_path = _summary_path(self._config, header, path)
         previous = summary_path.read_text() if summary_path.exists() else "None — new session"
@@ -187,12 +188,18 @@ class PiSessionTracker:
         )
         result = self._summarize_call(user)
         if not result:
-            return  # offset not advanced → retried on next change; old summary untouched
+            # offset not advanced; old summary untouched. Queue it so a session that already ended
+            # (no further file changes) is still summarized once providers/network are back.
+            if not retry:
+                from .jobs import enqueue
+                enqueue(self._config, {"type": "summarize", "path": path})
+            return False
 
         summary_path.write_text(result.strip() + "\n")
         self._save(path, new_offset)
         logger.info("Updated Pi summary: %s", summary_path.name)
         self._consolidate(self._config, {"cwd": cwd}, summary_path, self._call_api)
+        return True
 
     def _summarize_call(self, user):
         """One call, plus one shorter retry if the output was truncated. Never returns partial text."""
