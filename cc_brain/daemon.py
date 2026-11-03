@@ -1,4 +1,4 @@
-"""Daemon: watches Pi/Hermes session dirs, triggers summarization + consolidation."""
+"""Daemon: watches Pi/Hermes/dsh session dirs, triggers summarization + consolidation."""
 
 import json
 import logging
@@ -17,6 +17,8 @@ from .consolidator import _load_state, _save_state
 from .memory_ops import consolidate as memory_ops, sleep
 from .mcp_server import _kind_from_target, _project_from_target
 from .pi_sessions import PI_SESSIONS_DIR, PiSessionTracker, is_session_file
+from .dsh_sessions import DSH_SESSIONS_DIR, DshSessionTracker, merge_recall_log
+from .dsh_sessions import is_session_file as is_dsh_session_file
 from . import jobs
 from .queue import list_pending, remove
 from .render import render
@@ -99,9 +101,10 @@ def _read_session_info(session_dir):
 
 
 class SessionHandler(FileSystemEventHandler):
-    def __init__(self, config, pi_tracker):
+    def __init__(self, config, pi_tracker, dsh_tracker):
         self._config = config
         self._pi = pi_tracker
+        self._dsh = dsh_tracker
         self._processed = set()
         self._debounce = {}
 
@@ -115,6 +118,9 @@ class SessionHandler(FileSystemEventHandler):
         p = Path(path)
         if is_session_file(p):
             self._pi.mark(p)
+            return
+        if is_dsh_session_file(p):
+            self._dsh.mark(p)
             return
         if p.name not in ("summary.md", "summary.txt", "session-summary.md"):
             return
@@ -209,15 +215,18 @@ def run_daemon(config_path=None):
     # Set up watchers
     observer = Observer()
     pi_tracker = PiSessionTracker(config, _call_api, on_summary)
-    handler = SessionHandler(config, pi_tracker)
+    dsh_tracker = DshSessionTracker(config, _call_api, on_summary)
+    handler = SessionHandler(config, pi_tracker, dsh_tracker)
 
     if PI_SESSIONS_DIR.exists():
         cutoff = time.time() - 3600
         for f in PI_SESSIONS_DIR.glob("*/*.jsonl"):
             if f.stat().st_mtime > cutoff:
                 pi_tracker.mark(f)
+    if DSH_SESSIONS_DIR.exists():
+        logger.info("dsh: %d sessions queued (unchanged ones are skipped by seq)", dsh_tracker.mark_unseen())
 
-    for d in (PI_SESSIONS_DIR, HERMES_SESSION_DIR):
+    for d in (PI_SESSIONS_DIR, HERMES_SESSION_DIR, DSH_SESSIONS_DIR):
         if d.exists():
             observer.schedule(handler, str(d), recursive=True)
             logger.info("Watching %s", d)
@@ -227,6 +236,7 @@ def run_daemon(config_path=None):
 
     handlers = {
         "summarize": lambda j: Path(j["path"]).exists() and pi_tracker._summarize(j["path"], retry=True),
+        "summarize_dsh": lambda j: Path(j["path"]).exists() and dsh_tracker._summarize(j["path"], retry=True),
         "ops": lambda j: not Path(j["summary"]).exists()
         or on_summary(config, {"cwd": j["cwd"]}, j["summary"], _call_api, retry=True) is not None,
     }
@@ -241,8 +251,13 @@ def run_daemon(config_path=None):
                 paused_until = now + WAKE_GRACE_S
             last_tick = now
             _process_queue(config)  # no LLM
+            try:
+                merge_recall_log(config)
+            except OSError:
+                logger.exception("dsh auto-recall log merge failed")
             if now >= paused_until:
                 pi_tracker.process()
+                dsh_tracker.process()
                 jobs.run_one(config, handlers)  # one retry per tick: a sleep backlog drains slowly
                 _maintenance(config)
             time.sleep(TICK_S)

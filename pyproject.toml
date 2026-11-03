@@ -11,6 +11,7 @@ dependencies = [
     "click>=8.0.0",
     "mcp>=1.0.0,<2",          # 2.x removed the Server decorator API used by mcp_server.py
     "numpy>=1.26",
+    "zstandard==0.25.0",
 ]
 
 [project.urls]
